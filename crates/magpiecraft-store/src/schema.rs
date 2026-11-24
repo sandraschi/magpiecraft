@@ -4,7 +4,14 @@
 //! block and bump `SCHEMA_VERSION`. Every statement here is `IF NOT EXISTS`, so a
 //! fresh file and an existing file both end up valid.
 
-pub const SCHEMA_VERSION: &str = "1";
+pub const SCHEMA_VERSION: &str = "2";
+
+/// Additive step from schema 1 to 2: the review queue needs to know how confident
+/// the filename parse was, and whether a human should look at it.
+pub const MIGRATE_1_TO_2: &str = r#"
+ALTER TABLE items ADD COLUMN confidence REAL NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0;
+"#;
 
 pub const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (

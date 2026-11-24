@@ -61,6 +61,10 @@ pub struct ItemRow {
     pub rtl: Option<bool>,
     /// Scan page minus printed page, remembered per item.
     pub page_offset: i32,
+    /// How confident the filename parse was, 0.0 to 1.0.
+    pub confidence: f64,
+    /// True when the parse was below the review threshold.
+    pub needs_review: bool,
     pub comic_info: bool,
     pub hash: Option<String>,
     pub missing: bool,
@@ -91,6 +95,10 @@ pub struct NewItem {
     pub volume: Option<String>,
     pub rtl: Option<bool>,
     pub comic_info: bool,
+    /// Filename parse confidence, 0.0 to 1.0.
+    pub confidence: f64,
+    /// Whether the item belongs in the review queue.
+    pub needs_review: bool,
 }
 
 /// Result of an upsert: whether the row was created or actually changed.
@@ -100,6 +108,10 @@ pub enum Upsert {
     Updated,
     Unchanged,
 }
+
+/// Fields read back before an upsert decides whether anything changed:
+/// id, size, mtime, container, was_missing, page_count, confidence.
+type ExistingItem = (i64, i64, i64, String, bool, Option<i64>, f64);
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScanStats {
@@ -190,6 +202,18 @@ impl Store {
         conn.execute_batch(schema::SCHEMA_SQL)
             .map_err(StoreError::sqlite)?;
         let store = Store { conn };
+        // Migrations are additive and versioned: a database written by an older
+        // build gains the new columns, a fresh one is built then migrated.
+        let version = store
+            .meta("schema_version")?
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        if version < 2 {
+            store
+                .conn
+                .execute_batch(schema::MIGRATE_1_TO_2)
+                .map_err(StoreError::sqlite)?;
+        }
         store.set_meta("schema_version", SCHEMA_VERSION)?;
         Ok(store)
     }
@@ -402,7 +426,8 @@ impl Store {
     fn item_select() -> &'static str {
         "SELECT i.id, i.library_id, i.rel, i.parent, i.name, i.title, i.container, i.size,
                 i.mtime, i.page_count, i.series_id, s.title, i.volume, i.rtl, i.comic_info,
-                i.hash, i.missing, i.updated_at, s.rtl, i.page_offset
+                i.hash, i.missing, i.updated_at, s.rtl, i.page_offset,
+                i.confidence, i.needs_review
          FROM items i LEFT JOIN series s ON s.id = i.series_id"
     }
 
@@ -428,15 +453,17 @@ impl Store {
             updated_at: r.get(17)?,
             series_rtl: r.get(18)?,
             page_offset: r.get(19)?,
+            confidence: r.get(20)?,
+            needs_review: r.get::<_, i32>(21)? != 0,
         })
     }
 
     /// Insert or update one item, keeping the FTS index in step.
     pub fn upsert_item(&mut self, item: &NewItem) -> StoreResult<(i64, Upsert)> {
-        let existing: Option<(i64, i64, i64, String, bool, Option<i64>)> = self
+        let existing: Option<ExistingItem> = self
             .conn
             .query_row(
-                "SELECT id, size, mtime, container, missing, page_count FROM items
+                "SELECT id, size, mtime, container, missing, page_count, confidence FROM items
                  WHERE library_id = ?1 AND rel = ?2",
                 params![item.library_id, item.rel],
                 |r| {
@@ -447,6 +474,7 @@ impl Store {
                         r.get(3)?,
                         r.get::<_, i32>(4)? != 0,
                         r.get(5)?,
+                        r.get(6)?,
                     ))
                 },
             )
@@ -459,11 +487,12 @@ impl Store {
         };
 
         match existing {
-            Some((id, size, mtime, container, was_missing, page_count)) => {
+            Some((id, size, mtime, container, was_missing, page_count, confidence)) => {
                 let same = size == item.size
                     && mtime == item.mtime
                     && container == item.container
                     && !was_missing
+                    && (confidence - item.confidence).abs() < 0.001
                     && match item.page_count {
                         Some(pages) => page_count == Some(pages),
                         None => true,
@@ -476,7 +505,8 @@ impl Store {
                         "UPDATE items SET parent = ?2, name = ?3, title = ?4, container = ?5, size = ?6,
                              mtime = ?7, page_count = COALESCE(?8, page_count), series_id = ?9,
                              volume = COALESCE(?10, volume), rtl = COALESCE(?11, rtl),
-                             comic_info = MAX(comic_info, ?12), missing = 0, updated_at = ?13
+                             comic_info = MAX(comic_info, ?12), confidence = ?14,
+                             needs_review = ?15, missing = 0, updated_at = ?13
                          WHERE id = ?1",
                         params![
                             id,
@@ -491,7 +521,9 @@ impl Store {
                             item.volume,
                             item.rtl,
                             i32::from(item.comic_info),
-                            now()
+                            now(),
+                            item.confidence,
+                            i32::from(item.needs_review)
                         ],
                     )
                     .map_err(StoreError::sqlite)?;
@@ -502,8 +534,9 @@ impl Store {
                 self.conn
                     .execute(
                         "INSERT INTO items(library_id, rel, parent, name, title, container, size, mtime,
-                             page_count, series_id, volume, rtl, comic_info, missing, updated_at)
-                         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14)",
+                             page_count, series_id, volume, rtl, comic_info, missing, updated_at,
+                             confidence, needs_review)
+                         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?15, ?16)",
                         params![
                             item.library_id,
                             item.rel,
@@ -518,7 +551,9 @@ impl Store {
                             item.volume,
                             item.rtl,
                             i32::from(item.comic_info),
-                            now()
+                            now(),
+                            item.confidence,
+                            i32::from(item.needs_review)
                         ],
                     )
                     .map_err(StoreError::sqlite)?;
@@ -573,6 +608,73 @@ impl Store {
         let mut st = self.conn.prepare(&sql).map_err(StoreError::sqlite)?;
         let rows = st
             .query_map(params![library_id, parent], Self::map_item)
+            .map_err(StoreError::sqlite)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::sqlite)?;
+        Ok(rows)
+    }
+
+    /// Items the filename parser was unsure about, worst first. This is the review
+    /// queue: nothing here was guessed silently, it was flagged.
+    pub fn review_items(&self, library_id: Option<i64>, limit: usize) -> StoreResult<Vec<ItemRow>> {
+        let limit = i64::try_from(limit.max(1)).unwrap_or(i64::MAX);
+        let map = Self::map_item;
+        match library_id {
+            Some(id) => {
+                let sql = format!(
+                    "{} WHERE i.library_id = ?1 AND i.missing = 0 AND i.needs_review = 1
+                     ORDER BY i.confidence, i.rel LIMIT ?2",
+                    Self::item_select()
+                );
+                let mut st = self.conn.prepare(&sql).map_err(StoreError::sqlite)?;
+                let rows = st
+                    .query_map(params![id, limit], map)
+                    .map_err(StoreError::sqlite)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(StoreError::sqlite)?;
+                Ok(rows)
+            }
+            None => {
+                let sql = format!(
+                    "{} WHERE i.missing = 0 AND i.needs_review = 1
+                     ORDER BY i.confidence, i.rel LIMIT ?1",
+                    Self::item_select()
+                );
+                let mut st = self.conn.prepare(&sql).map_err(StoreError::sqlite)?;
+                let rows = st
+                    .query_map(params![limit], map)
+                    .map_err(StoreError::sqlite)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(StoreError::sqlite)?;
+                Ok(rows)
+            }
+        }
+    }
+
+    pub fn review_count(&self) -> StoreResult<usize> {
+        let n: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM items WHERE missing = 0 AND needs_review = 1",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(StoreError::sqlite)?;
+        Ok(usize::try_from(n).unwrap_or(usize::MAX))
+    }
+
+    /// Live items of one library in path order, capped. Used by the rename planner.
+    pub fn items_in_library(&self, library_id: i64, limit: usize) -> StoreResult<Vec<ItemRow>> {
+        let sql = format!(
+            "{} WHERE i.library_id = ?1 AND i.missing = 0 ORDER BY i.rel LIMIT ?2",
+            Self::item_select()
+        );
+        let mut st = self.conn.prepare(&sql).map_err(StoreError::sqlite)?;
+        let rows = st
+            .query_map(
+                params![library_id, i64::try_from(limit.max(1)).unwrap_or(i64::MAX)],
+                Self::map_item,
+            )
             .map_err(StoreError::sqlite)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::sqlite)?;
@@ -663,6 +765,121 @@ impl Store {
             .execute(
                 "UPDATE items SET page_offset = ?2 WHERE id = ?1",
                 params![id, offset],
+            )
+            .map_err(StoreError::sqlite)?;
+        Ok(())
+    }
+
+    // ------------------------------------------------- reorganise support
+    /// Every item whose relative path equals `rel` or sits below it.
+    pub fn items_under_path(&self, library_id: i64, rel: &str) -> StoreResult<Vec<(i64, String)>> {
+        let pattern = format!("{}/%", rel.replace('%', "\\%"));
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT id, rel FROM items
+                 WHERE library_id = ?1 AND (rel = ?2 OR rel LIKE ?3 ESCAPE '\\')
+                 ORDER BY length(rel)",
+            )
+            .map_err(StoreError::sqlite)?;
+        let rows = st
+            .query_map(params![library_id, rel, pattern], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(StoreError::sqlite)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::sqlite)?;
+        Ok(rows)
+    }
+
+    /// Rewrite one item's path after a move, and carry its reading progress to the
+    /// new key. Progress is keyed by the item key, so a rename that does not do
+    /// this would silently lose the reader's place.
+    pub fn move_item_path(&mut self, id: i64, old_rel: &str, new_rel: &str) -> StoreResult<()> {
+        let library_id: i64 = self
+            .conn
+            .query_row(
+                "SELECT library_id FROM items WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .map_err(StoreError::sqlite)?;
+        let parent = match new_rel.rsplit_once('/') {
+            Some((p, _)) => p.to_string(),
+            None => String::new(),
+        };
+        self.conn
+            .execute(
+                "UPDATE items SET rel = ?2, parent = ?3, missing = 0, updated_at = ?4 WHERE id = ?1",
+                params![id, new_rel, parent, now()],
+            )
+            .map_err(StoreError::sqlite)?;
+        let old_key = format!("lib:{library_id}|{old_rel}");
+        let new_key = format!("lib:{library_id}|{new_rel}");
+        self.conn
+            .execute(
+                "UPDATE progress SET key = ?2 WHERE key = ?1",
+                params![old_key, new_key],
+            )
+            .map_err(StoreError::sqlite)?;
+        // Keep the FTS path column in step with the file system.
+        self.conn
+            .execute(
+                "UPDATE items_fts SET path = ?2 WHERE rowid = ?1",
+                params![id, new_rel],
+            )
+            .map_err(StoreError::sqlite)?;
+        Ok(())
+    }
+
+    /// Move a directory row and every directory below it.
+    pub fn move_dir_path(&mut self, library_id: i64, from: &str, to: &str) -> StoreResult<usize> {
+        let pattern = format!("{}/%", from.replace('%', "\\%"));
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT rel FROM dirs WHERE library_id = ?1 AND (rel = ?2 OR rel LIKE ?3 ESCAPE '\\')",
+            )
+            .map_err(StoreError::sqlite)?;
+        let rels = st
+            .query_map(params![library_id, from, pattern], |r| {
+                r.get::<_, String>(0)
+            })
+            .map_err(StoreError::sqlite)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::sqlite)?;
+        drop(st);
+        let mut moved = 0usize;
+        for rel in rels {
+            let new_rel = if rel == from {
+                to.to_string()
+            } else {
+                format!("{to}{}", rel.get(from.len()..).unwrap_or(""))
+            };
+            let new_parent = match new_rel.rsplit_once('/') {
+                Some((p, _)) => p.to_string(),
+                None => String::new(),
+            };
+            let name = new_rel.rsplit('/').next().unwrap_or("").to_string();
+            self.conn
+                .execute(
+                    "UPDATE dirs SET rel = ?3, parent = ?4, name = ?5
+                     WHERE library_id = ?1 AND rel = ?2",
+                    params![library_id, rel, new_rel, new_parent, name],
+                )
+                .map_err(StoreError::sqlite)?;
+            moved += 1;
+        }
+        Ok(moved)
+    }
+
+    /// Move a series row (and its items' series id stays valid because only the
+    /// path label changes).
+    pub fn move_series_path(&mut self, library_id: i64, from: &str, to: &str) -> StoreResult<()> {
+        self.conn
+            .execute(
+                "UPDATE series SET rel = ?3 WHERE library_id = ?1 AND rel = ?2",
+                params![library_id, from, to],
             )
             .map_err(StoreError::sqlite)?;
         Ok(())
@@ -1114,6 +1331,8 @@ mod tests {
             volume: None,
             rtl: None,
             comic_info: false,
+            confidence: 0.5,
+            needs_review: false,
         }
     }
 
