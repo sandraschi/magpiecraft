@@ -82,13 +82,14 @@ pub fn tools() -> Value {
              printed page numbers and scan order. rtl: set reading direction for one item. progress_get and \
              progress_set: reading position.",
             json!({
-                "operation": ops(&["volume", "page_offset", "rtl", "progress_get", "progress_set"]),
+                "operation": ops(&["volume", "page_offset", "rtl", "progress_get", "progress_set", "page_export"]),
                 "key": key,
                 "offset": { "type": "integer", "description": "page_offset: scan page minus printed page" },
                 "rtl": { "type": ["boolean", "null"], "description": "rtl: true, false, or null to clear" },
-                "page": { "type": "integer", "description": "progress_set: current page, 1 based" },
+                "page": { "type": "integer", "description": "progress_set: current page; page_export: page to write" },
                 "total": { "type": "integer", "description": "progress_set: page count if unknown" },
-                "finished": { "type": "boolean", "description": "progress_set: mark as finished" }
+                "finished": { "type": "boolean", "description": "progress_set: mark as finished" },
+                "out": { "type": "string", "description": "page_export: file to write the page to" }
             }),
             &["operation"]
         ),
@@ -205,6 +206,12 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
         "media_read" => match op.as_str() {
             "volume" | "pages" => Command::Pages {
                 key: req_str(args, "key")?,
+            },
+            "page_export" | "page.export" => Command::PageExport {
+                key: req_str(args, "key")?,
+                page: opt_usize(args, "page")
+                    .ok_or_else(|| "missing required integer argument: page".to_string())?,
+                out: req_str(args, "out")?,
             },
             "page_offset" | "offset" => Command::PageOffset {
                 key: req_str(args, "key")?,

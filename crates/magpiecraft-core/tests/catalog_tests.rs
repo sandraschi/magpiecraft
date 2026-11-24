@@ -416,17 +416,71 @@ fn unreadable_containers_say_so_instead_of_showing_nothing() {
     std::fs::write(root.join("Saga/Saga 056.cbr"), b"Rar! not really").unwrap();
     std::fs::write(root.join("Saga/Saga 057.pdf"), b"%PDF-1.4 not really").unwrap();
     let mut c = catalog(&home);
+    // No tools: the containers are supported by the build but not readable here.
+    c.set_tools(magpiecraft_core::Toolchain::default());
     c.add_library("Comics", &root.display().to_string(), "comics", false, None)
         .unwrap();
     c.scan(None, false).unwrap();
     let items = c.browse(Some("lib:1|Saga")).unwrap().items;
     let cbr = items.iter().find(|i| i.title.contains("056")).unwrap();
     assert_eq!(cbr.container, ContainerKind::Rar);
-    assert!(!cbr.readable);
+    assert!(!cbr.readable, "without 7-Zip a CBR is not readable");
     let pages = c.pages(&cbr.key).unwrap();
     assert!(!pages.readable);
     assert!(pages.reason.as_deref().unwrap().contains("7-Zip"));
-    assert!(c.page_set(&cbr.key).is_err());
+    let err = c.page_set(&cbr.key).unwrap_err();
+    assert_eq!(err.kind(), "not_configured");
+    let pdf = items.iter().find(|i| i.title.contains("057")).unwrap();
+    assert!(!pdf.readable, "without PdfCraft a PDF is not readable");
+    assert!(c
+        .pages(&pdf.key)
+        .unwrap()
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("PdfCraft"));
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// End to end on the RAR path: 7-Zip reads a ZIP renamed to .cbr, so the test can
+/// build the fixture without a RAR encoder. Skipped when 7-Zip is not installed.
+#[test]
+fn cbr_pages_are_listed_and_read_through_seven_zip() {
+    let tools = magpiecraft_core::Toolchain::detect();
+    let Some(seven) = tools.seven_zip.clone() else {
+        eprintln!("7-Zip not installed: skipping the CBR end-to-end test");
+        return;
+    };
+    let (home, root) = fixture("cbr");
+    let cbz = root.join("Saga/Saga 054.cbz");
+    std::fs::copy(&cbz, root.join("Saga/Saga 058.cbr")).unwrap();
+    let mut c = catalog(&home);
+    let mut forced = magpiecraft_core::Toolchain::default();
+    forced.seven_zip = Some(seven);
+    c.set_tools(forced);
+    c.add_library("Comics", &root.display().to_string(), "comics", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let items = c.browse(Some("lib:1|Saga")).unwrap().items;
+    let cbr = items.iter().find(|i| i.title.contains("058")).unwrap();
+    assert!(cbr.readable, "7-Zip is present, so the CBR is readable");
+    assert_eq!(
+        cbr.page_count,
+        Some(5),
+        "page count comes from the index read"
+    );
+    let pages = c.pages(&cbr.key).unwrap();
+    assert!(pages.readable);
+    assert_eq!(pages.count, 5);
+    assert_eq!(pages.preview.first().map(String::as_str), Some("001.png"));
+    let image = c.page_image(&cbr.key, 2, 80, 120).unwrap();
+    assert!(image.width() > 0 && image.height() > 0);
+    // The archive itself is untouched and the extraction went to the cache.
+    assert!(root.join("Saga/Saga 058.cbr").is_file());
+    let cache = home.join("cache").join("extract");
+    assert!(cache.is_dir(), "extraction happens under the app cache");
     drop(c);
     std::fs::remove_dir_all(&home).unwrap();
     std::fs::remove_dir_all(&root).unwrap();
@@ -476,6 +530,33 @@ fn mature_libraries_stay_hidden_until_enabled() {
     let overview = c.browse(None).unwrap();
     assert_eq!(overview.folders.len(), 1);
     assert!(c.browse(Some("lib:1|")).is_ok());
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn page_export_writes_the_raw_page_outside_the_library() {
+    let (home, root) = fixture("export");
+    let mut c = catalog(&home);
+    c.add_library("Comics", &root.display().to_string(), "comics", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let item = c.browse(Some("lib:1|Saga")).unwrap().items.remove(0);
+    let out = home.join("exported/page-2.png");
+    let report = c
+        .export_page(&item.key, 2, &out.display().to_string())
+        .unwrap();
+    assert_eq!(report["page"], serde_json::json!(2));
+    assert_eq!(report["page_name"], serde_json::json!("002.png"));
+    let bytes = std::fs::read(&out).unwrap();
+    assert_eq!(bytes.len() as u64, report["bytes"].as_u64().unwrap());
+    assert_eq!(&bytes[1..4], b"PNG", "the page is copied byte for byte");
+    assert!(out.starts_with(home.join("exported")));
+    assert!(!root.join("exported").exists(), "never inside the library");
+    assert!(c
+        .export_page(&item.key, 999, &out.display().to_string())
+        .is_err());
     drop(c);
     std::fs::remove_dir_all(&home).unwrap();
     std::fs::remove_dir_all(&root).unwrap();

@@ -50,6 +50,12 @@ pub enum Command {
         key: String,
         offset: i32,
     },
+    /// Write one page of an item to a file. Read-only on the collection.
+    PageExport {
+        key: String,
+        page: usize,
+        out: String,
+    },
     Rtl {
         key: String,
         rtl: Option<bool>,
@@ -118,6 +124,7 @@ impl Command {
             Command::Item { .. } => "item",
             Command::Pages { .. } => "pages",
             Command::PageOffset { .. } => "page_offset",
+            Command::PageExport { .. } => "page_export",
             Command::Rtl { .. } => "rtl",
             Command::ProgressGet { .. } => "progress.get",
             Command::ProgressSet { .. } => "progress.set",
@@ -186,6 +193,7 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
         Command::Item { key } => to_value(catalog.item(&key)?),
         Command::Pages { key } => to_value(catalog.pages(&key)?),
         Command::PageOffset { key, offset } => catalog.set_page_offset(&key, offset),
+        Command::PageExport { key, page, out } => catalog.export_page(&key, page, &out),
         Command::Rtl { key, rtl } => catalog.set_item_rtl(&key, rtl),
         Command::ProgressGet { key } => to_value(catalog.progress_get(&key)?),
         Command::ProgressSet {

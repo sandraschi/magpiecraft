@@ -115,6 +115,12 @@ pub struct Settings {
     pub cover_quality: u8,
     /// Prefetch depth in the reader.
     pub prefetch_pages: usize,
+    /// PDF render resolution for pages that come from PdfCraft.
+    pub pdf_dpi: u32,
+    /// Ceiling for extracted CBR/RAR copies, in MiB. Oldest extraction goes first.
+    pub extract_cache_mb: u64,
+    /// Ceiling for rendered PDF pages, in MiB.
+    pub render_cache_mb: u64,
 }
 
 impl Default for Settings {
@@ -129,6 +135,9 @@ impl Default for Settings {
             search_limit: 300,
             cover_quality: 78,
             prefetch_pages: 3,
+            pdf_dpi: 200,
+            extract_cache_mb: 8192,
+            render_cache_mb: 2048,
         }
     }
 }
@@ -143,6 +152,9 @@ impl Settings {
         self.search_limit = self.search_limit.clamp(10, 5000);
         self.cover_quality = self.cover_quality.clamp(30, 95);
         self.prefetch_pages = self.prefetch_pages.min(12);
+        self.pdf_dpi = self.pdf_dpi.clamp(96, 400);
+        self.extract_cache_mb = self.extract_cache_mb.clamp(256, 200_000);
+        self.render_cache_mb = self.render_cache_mb.clamp(64, 50_000);
         if self.theme != "light" {
             self.theme = "dark".to_string();
         }

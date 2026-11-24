@@ -156,6 +156,11 @@ mod tests {
             cache_file: std::env::temp_dir().join("magpie-cover-test/none.jpg"),
             item_path: std::env::temp_dir().join("magpie-cover-test/none.cbz"),
             container: magpiecraft_core::ContainerKind::Zip,
+            helpers: magpiecraft_core::Helpers::new(
+                None,
+                None,
+                std::env::temp_dir().join("magpie-cover-test"),
+            ),
         };
         cache.request("k", source.clone());
         cache.request("k", source);

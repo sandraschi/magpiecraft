@@ -1,14 +1,15 @@
 //! Cover thumbnails, cached as JPEG files under the app cache directory.
 //!
 //! A cover is page one of an item, or of the first readable item below a folder
-//! (the prototype's folder covers). Rendering is a pure function of the source
-//! and the cache path, so the desktop app can call it from a worker thread with
-//! no database handle and no UI state.
+//! (the prototype's folder covers). Rendering is a function of the source and the
+//! cache path, so the desktop app can call it from a worker thread with no database
+//! handle and no UI state. CBR/RAR and PDF covers go through the same path as any
+//! other page, using whichever external tool the container needs.
 
 use crate::error::{MagpieError, MagpieResult};
 use crate::images;
 use crate::model::ContainerKind;
-use magpiecraft_comics::PageSet;
+use magpiecraft_comics::{Helpers, PageSet};
 use std::path::{Path, PathBuf};
 
 /// Everything needed to render one cover, resolved on the UI thread from the
@@ -20,6 +21,9 @@ pub struct CoverSource {
     /// Archive file or page folder that provides page one.
     pub item_path: PathBuf,
     pub container: ContainerKind,
+    /// External tool paths and cache root; a CBR cover needs 7-Zip, a PDF needs
+    /// PdfCraft.
+    pub helpers: Helpers,
 }
 
 /// Render (or reuse) the cover JPEG. Returns the cache file path.
@@ -38,7 +42,7 @@ pub fn render_cover(
     if let Some(dir) = source.cache_file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| MagpieError::io(dir, e))?;
     }
-    let set = PageSet::open(&source.item_path, source.container)?;
+    let set = PageSet::open(&source.item_path, source.container, &source.helpers)?;
     if set.is_empty() {
         return Err(MagpieError::not_found(format!(
             "{} has no pages",
@@ -124,6 +128,7 @@ mod tests {
             cache_file: cache_file_for(&dir.join("covers"), "lib:1|vol.cbz"),
             item_path: cbz.clone(),
             container: ContainerKind::Zip,
+            helpers: Helpers::new(None, None, dir.join("cache")),
         };
         let path = render_cover(&source, 90, 130, 80).unwrap();
         assert!(path.is_file());
@@ -153,6 +158,7 @@ mod tests {
             cache_file: dir.join("covers/x.jpg"),
             item_path: dir.join("missing.cbz"),
             container: ContainerKind::Zip,
+            helpers: Helpers::new(None, None, dir.join("cache")),
         };
         assert!(render_cover(&source, 90, 130, 80).is_err());
         assert!(!source.cache_file.exists());

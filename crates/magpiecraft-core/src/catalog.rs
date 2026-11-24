@@ -110,6 +110,35 @@ impl Catalog {
         &self.tools
     }
 
+    /// Replace the detected toolchain. Tests use it to prove both states: with the
+    /// tool (real extraction) and without it (`not_configured`).
+    pub fn set_tools(&mut self, tools: Toolchain) {
+        self.tools = tools;
+    }
+
+    /// Tool paths and cache root for containers that go through an external tool.
+    pub fn helpers(&self) -> magpiecraft_comics::Helpers {
+        let mut helpers = magpiecraft_comics::Helpers::new(
+            self.tools.seven_zip.clone(),
+            self.tools.pdfcraft.clone(),
+            self.paths.cache_dir(),
+        );
+        helpers.pdf_dpi = self.settings.pdf_dpi;
+        helpers.extract_cap_bytes = self.settings.extract_cache_mb.saturating_mul(1024 * 1024);
+        helpers.render_cap_bytes = self.settings.render_cache_mb.saturating_mul(1024 * 1024);
+        helpers
+    }
+
+    /// Whether this build can read the container *with the tools present right
+    /// now*. A CBR without 7-Zip is not readable, and says so.
+    pub fn container_readable(&self, container: ContainerKind) -> bool {
+        match container {
+            ContainerKind::Rar => self.helpers().has_seven_zip(),
+            ContainerKind::Pdf => self.helpers().has_pdfcraft(),
+            other => other.readable_now(),
+        }
+    }
+
     pub fn set_settings(&mut self, settings: Settings) -> MagpieResult<Settings> {
         self.settings = settings.sanitised();
         save_settings(&self.paths, &self.settings)?;
@@ -364,18 +393,28 @@ impl Catalog {
         container: &ContainerKind,
         path: &Path,
     ) -> (Option<i64>, Option<ComicInfo>) {
+        let helpers = self.helpers();
+        let to_count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
         match container {
             ContainerKind::Zip => {
-                let pages = PageSet::open(path, ContainerKind::Zip)
+                let pages = PageSet::open(path, ContainerKind::Zip, &helpers)
                     .ok()
-                    .map(|s| i64::try_from(s.len()).unwrap_or(i64::MAX));
+                    .map(|s| to_count(s.len()));
                 let comic = zip_comic_info(path).ok().flatten();
                 (pages, comic)
             }
-            ContainerKind::Pdf => {
-                let pages = magpiecraft_tools::pdf_info(&self.tools, path)
+            ContainerKind::Rar => {
+                // An index read through 7-Zip, no extraction. Costs about 150 ms per
+                // archive, once, when the item is new.
+                let pages = magpiecraft_comics::rar::list(path, &helpers)
                     .ok()
-                    .map(|i| i64::from(i.pages));
+                    .map(|p| to_count(p.len()));
+                (pages, None)
+            }
+            ContainerKind::Pdf => {
+                let pages = magpiecraft_comics::pdf::count(path, &helpers)
+                    .ok()
+                    .map(to_count);
                 (pages, None)
             }
             _ => (None, None),
@@ -552,7 +591,7 @@ impl Catalog {
             name: row.name.clone(),
             title: row.title.clone(),
             container,
-            readable: container.readable_now(),
+            readable: self.container_readable(container),
             size: row.size,
             mtime: row.mtime,
             page_count: row.page_count,
@@ -577,33 +616,20 @@ impl Catalog {
             .ok_or_else(|| MagpieError::not_found(format!("no item at {key}")))?;
         let container = ContainerKind::parse(&row.container).unwrap_or(ContainerKind::File);
         let path = library_path(&lib, &row.rel);
-        let (readable, count, preview, reason) = if container.readable_now() {
-            match PageSet::open(&path, container) {
+        let (readable, count, preview, reason) =
+            match PageSet::open(&path, container, &self.helpers()) {
                 Ok(set) => {
                     let preview: Vec<String> =
                         set.pages().iter().take(3).cloned().collect::<Vec<_>>();
                     (true, set.len(), preview, None)
                 }
-                Err(e) => (false, 0, Vec::new(), Some(e.to_string())),
-            }
-        } else {
-            (
-                false,
-                usize::try_from(row.page_count.unwrap_or(0)).unwrap_or(0),
-                Vec::new(),
-                Some(match container {
-                    ContainerKind::Rar => {
-                        "CBR/RAR has no reader in this build; 7-Zip extraction is Tier 2"
-                            .to_string()
-                    }
-                    ContainerKind::Pdf => {
-                        "PDF pages are rendered by PdfCraft (pdfcraft-cli render); Tier 2"
-                            .to_string()
-                    }
-                    _ => "not a page container".to_string(),
-                }),
-            )
-        };
+                Err(e) => (
+                    false,
+                    usize::try_from(row.page_count.unwrap_or(0)).unwrap_or(0),
+                    Vec::new(),
+                    Some(e.to_string()),
+                ),
+            };
         let back = ItemKey::new(lib.id, &row.parent).as_string();
         Ok(PageSetInfo {
             key: row.key(),
@@ -631,7 +657,11 @@ impl Catalog {
             .item_by_rel(lib.id, &ik.rel)?
             .ok_or_else(|| MagpieError::not_found(format!("no item at {key}")))?;
         let container = ContainerKind::parse(&row.container).unwrap_or(ContainerKind::File);
-        Ok(PageSet::open(&library_path(&lib, &row.rel), container)?)
+        Ok(PageSet::open(
+            &library_path(&lib, &row.rel),
+            container,
+            &self.helpers(),
+        )?)
     }
 
     /// Resolve the cover for an item or folder without touching the image.
@@ -651,6 +681,7 @@ impl Catalog {
             cache_file: cache_file_for(&self.paths.covers_dir(), &row.key()),
             item_path: library_path(&lib, &row.rel),
             container,
+            helpers: self.helpers(),
         })
     }
 
@@ -677,6 +708,32 @@ impl Catalog {
         let set = self.page_set(key)?;
         let bytes = set.read(page)?;
         images::decode_fitted(&bytes, max_w, max_h)
+    }
+
+    /// Write one page to a file. The bytes are copied, never re-encoded, so an
+    /// exported page is exactly the page in the archive.
+    pub fn export_page(&self, key: &str, page: usize, out: &str) -> MagpieResult<Value> {
+        if out.trim().is_empty() {
+            return Err(MagpieError::invalid("output path is empty"));
+        }
+        let set = self.page_set(key)?;
+        let bytes = set.read(page)?;
+        let page_name = set.name(page).unwrap_or("").to_string();
+        let target = PathBuf::from(out);
+        if let Some(dir) = target.parent() {
+            if !dir.as_os_str().is_empty() {
+                std::fs::create_dir_all(dir).map_err(|e| MagpieError::io(dir, e))?;
+            }
+        }
+        std::fs::write(&target, &bytes).map_err(|e| MagpieError::io(&target, e))?;
+        Ok(json!({
+            "ok": true,
+            "key": key,
+            "page": page,
+            "page_name": page_name,
+            "out": target.display().to_string(),
+            "bytes": bytes.len(),
+        }))
     }
 
     // ------------------------------------------------------------ progress

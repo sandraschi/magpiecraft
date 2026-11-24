@@ -99,6 +99,13 @@ enum Cmd {
     Item { key: String },
     /// Page list of one volume.
     Pages { key: String },
+    /// Write one page to a file (read-only on the collection).
+    Page {
+        key: String,
+        page: usize,
+        #[arg(long)]
+        out: String,
+    },
     /// Set the printed-page offset of one item.
     Offset { key: String, value: i32 },
     /// Force or clear the reading direction of one item.
@@ -322,6 +329,14 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
         }
         Cmd::Pages { key } => {
             let c = Command::Pages { key: key.clone() };
+            (c.id(), c)
+        }
+        Cmd::Page { key, page, out } => {
+            let c = Command::PageExport {
+                key: key.clone(),
+                page: *page,
+                out: out.clone(),
+            };
             (c.id(), c)
         }
         Cmd::Offset { key, value } => {

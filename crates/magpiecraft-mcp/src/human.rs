@@ -211,6 +211,13 @@ pub fn print(command: &str, value: &Value) {
                 }
             }
         }
+        "page_export" => println!(
+            "wrote page {} ({}) to {} ({} bytes)",
+            n(value, "page"),
+            s(value, "page_name"),
+            s(value, "out"),
+            n(value, "bytes")
+        ),
         "stats" => {
             println!(
                 "{} libraries, {} items, {} pages, {}",

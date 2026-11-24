@@ -24,7 +24,7 @@ pub use model::{
 
 /// Re-exports so L2 and L3 do not need to depend on every leaf crate.
 pub use magpiecraft_comics::{
-    ContainerKind, Crop, FitMode, PageSet, Reader, ReaderSettings, Slot, Step,
+    ContainerKind, Crop, FitMode, Helpers, PageSet, Reader, ReaderSettings, Slot, Step,
 };
 pub use magpiecraft_tools::Toolchain;
 
