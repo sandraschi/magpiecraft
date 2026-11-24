@@ -1,0 +1,16 @@
+[package]
+name = "magpiecraft-health"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MagpieCraft integrity: BLAKE3 checksum manifests, verification, exact duplicate detection"
+
+[lints]
+workspace = true
+
+[dependencies]
+magpiecraft-scan = { path = "../magpiecraft-scan" }
+serde.workspace = true
+thiserror.workspace = true
+blake3.workspace = true
