@@ -54,6 +54,22 @@ Where the time goes: the two manga libraries alone hold about 1.4 million loose 
 and every new item is opened once for its page list or its PDF page count. A second scan of the same
 collection skips every unchanged item, so it is a tree walk plus one index lookup per volume.
 
+## Second scan of the same collection (incremental)
+
+Run immediately after the first, same build, warm OS cache:
+
+| Metric | Value |
+|---|---|
+| Items checked | 12,761 |
+| Unchanged | 12,761 (100 percent) |
+| Added / changed / missing | 0 / 0 / 0 |
+| Archives or folders reopened | 0 |
+| Wall time | **156 s** |
+
+Against 70.6 minutes for the first scan: 27 times faster, and the cost is now the filesystem walk of
+about 1.5 million images rather than opening anything. `Manga` took 142 s of that 156 s, a cold-cache
+effect on one subtree rather than work per item; the larger `Manga - Nihongo` took 11.8 s.
+
 Cover thumbnails are generated lazily, only for cards on screen, at three per frame.
 
 ## Known costs and where they will go

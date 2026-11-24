@@ -19,11 +19,29 @@ waits for the other session to review this Tier 1 exit.
 
 ## Last concrete action
 
-Wrote the documentation set, ran the gates (`cargo test --workspace` 116 passed, clippy clean with the
-deny lints, fmt clean), probed the MCP stdio surface, measured the 100,000-file scan benchmark, and
-registered the 13 collection libraries in the real data home. A first full scan of the collection was
-started in the background and was still running when this file was written; it is resumable and
-incremental.
+Ran the gates (117 tests, clippy clean with the deny lints, fmt clean), indexed the real collection,
+measured the first and second scan, captured and reviewed the UI, fixed two layout bugs the screenshots
+exposed, and pushed.
+
+Measured on 2026-11-24 with the release build:
+
+- Full scan of the reference collection (13 libraries, 661 GiB): **12,761 items, 1,554,955 pages,
+  70.6 minutes**. Incremental rescan of the same tree: **156 s, 12,761 unchanged, nothing reopened**.
+- Synthetic 100,000-file scan: **478 ms**.
+- `cargo test --workspace`: **117 passed**, 0 failed.
+- MCP stdio probe: initialize, tools/list, tools/call answered; a notification is not answered.
+- `magpiecraft.exe --smoke` reports the library it opened.
+
+Two bugs found by looking at the app rather than trusting it:
+
+1. `App::ui` hands over an unbounded `Ui`, so `Panel::top/bottom` placed the status bar off-screen and
+   `available_size()` reported about 14,285 points. The page area and status bar now take explicit rects
+   from `ctx.content_rect()`, and the reader paints into a rect derived from the real window.
+2. Card titles with two lines pushed their subtitles out of line. The title now reserves two lines.
+
+Both are fixed, with the reader geometry now independent of layout-cursor arithmetic. Screenshots in
+`docs/screenshots/` are from the synthetic demo library (`scripts/make-demo-library.ps1`), and
+`scripts/capture-window.ps1` reproduces them.
 
 ## Next step
 
@@ -78,7 +96,12 @@ None. Two known limits are deliberate and documented rather than blockers:
 - On Windows, drop the `Catalog` before deleting a temp directory in a test, or SQLite keeps the file
   locked (error 32).
 - The real data home is `%LOCALAPPDATA%\magpiecraft`; `MAGPIECRAFT_HOME` overrides it and the smoke
-  tests use it. Sandra's 13 libraries are registered there.
+  tests use it. Sandra's 13 libraries are registered there and indexed (12,761 items).
+- Do not trust the UI because it compiles. `scripts/capture-window.ps1` captures the real window to a
+  PNG, and the script must mark itself DPI aware or the bitmap is clipped and the layout looks broken
+  when it is not. That trap cost an hour; the capture script documents it.
+- `App::ui` gives an unbounded `Ui`. Never use `available_size()` or `Panel` inside it; take rects from
+  `ctx.content_rect()`.
 
 ## Deliberately not done
 
