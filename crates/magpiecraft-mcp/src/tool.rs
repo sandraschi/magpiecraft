@@ -119,8 +119,8 @@ pub fn tools() -> Value {
             json!({
                 "operation": ops(&["review", "plan_rename", "plan_quarantine", "plans", "apply", "journals", "undo"]),
                 "library": library,
-                "limit": { "type": "integer", "description": "review/plan_rename: how many entries (default 200 / 5000)" },
-                "preset": { "type": "string", "description": "plan_rename: comics or manga naming preset" },
+                "limit": { "type": "integer", "description": "review: how many entries (default 200); plan_rename: 0 for all" },
+                "preset": { "type": "string", "description": "plan_rename: auto (per item kind), comics, manga or video" },
                 "key": key,
                 "id": { "type": "string", "description": "apply/undo: plan or journal id" },
                 "confirm": { "type": "boolean", "description": "apply/undo: must be true; without it the plan is refused" }
@@ -280,8 +280,8 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
             },
             "plan_rename" | "plan.rename" => Command::PlanRename {
                 library: opt_str(args, "library"),
-                preset: opt_str(args, "preset").unwrap_or_else(|| "comics".to_string()),
-                limit: opt_usize(args, "limit").unwrap_or(5000),
+                preset: opt_str(args, "preset").unwrap_or_else(|| "auto".to_string()),
+                limit: opt_usize(args, "limit").unwrap_or(0),
             },
             "plan_quarantine" | "plan.quarantine" => Command::PlanQuarantine {
                 key: req_str(args, "key")?,

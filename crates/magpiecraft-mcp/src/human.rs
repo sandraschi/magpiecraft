@@ -26,6 +26,15 @@ fn n(v: &Value, key: &str) -> i64 {
     v.get(key).and_then(Value::as_i64).unwrap_or(0)
 }
 
+/// A list result is wrapped by `dispatch` as `{"ok": true, "value": [...]}`, so the
+/// printer has to look inside `value` before giving up.
+fn list_of(value: &Value) -> Option<&Vec<Value>> {
+    value
+        .get("value")
+        .and_then(Value::as_array)
+        .or_else(|| value.as_array())
+}
+
 pub fn print(command: &str, value: &Value) {
     if value.get("ok").and_then(Value::as_bool) == Some(false) {
         println!("error ({}): {}", s(value, "error_type"), s(value, "error"));
@@ -65,7 +74,7 @@ pub fn print(command: &str, value: &Value) {
                 println!("external tools missing: {}", missing.join(", "));
             }
         }
-        "libraries" => match value.as_array() {
+        "libraries" => match list_of(value) {
             Some(list) if !list.is_empty() => {
                 for lib in list {
                     println!(
@@ -146,11 +155,11 @@ pub fn print(command: &str, value: &Value) {
                 for item in items {
                     let pages = match item.get("page_count").and_then(Value::as_i64) {
                         Some(p) => format!("{p} p"),
-                        None => "?".to_string(),
+                        None => "-".to_string(),
                     };
                     println!(
-                        "  {:<10} {:<44} {:<6} {}",
-                        s(item, "container"),
+                        "  {:<9} {:<44} {:<6} {}",
+                        s(item, "kind"),
                         s(item, "title"),
                         pages,
                         s(item, "key")
@@ -339,6 +348,19 @@ pub fn print(command: &str, value: &Value) {
                     );
                 }
             }
+            if let Some(kinds) = value.get("per_kind").and_then(Value::as_array) {
+                if !kinds.is_empty() {
+                    println!("  by kind:");
+                }
+                for k in kinds {
+                    println!(
+                        "    {:<10} {:>7} items  {:>10}",
+                        s(k, "kind"),
+                        n(k, "items"),
+                        bytes(n(k, "bytes"))
+                    );
+                }
+            }
             if let Some(drives) = value.get("drives").and_then(Value::as_array) {
                 for d in drives {
                     println!(
@@ -411,7 +433,7 @@ pub fn print(command: &str, value: &Value) {
                 println!("clean: every listed file matches its checksum");
             }
         }
-        "series" => match value.as_array() {
+        "series" => match list_of(value) {
             Some(list) if !list.is_empty() => {
                 for ser in list {
                     println!("{:<44} {}", s(ser, "title"), s(ser, "rel"));
@@ -467,6 +489,18 @@ mod tests {
         assert_eq!(bytes(1023), "1023 B");
         assert_eq!(bytes(1024), "1.0 KiB");
         assert_eq!(bytes(4_300_000_000), "4.0 GiB");
+    }
+
+    #[test]
+    fn a_wrapped_list_is_still_printed() {
+        // dispatch wraps a list under `value`; the printer must look inside.
+        let wrapped = json!({"ok": true, "command": "libraries", "value": [
+            {"id": 1, "name": "Comics", "kind": "comics", "root": "L:/x"}
+        ]});
+        assert_eq!(list_of(&wrapped).map(|l| l.len()), Some(1));
+        print("libraries", &wrapped);
+        let bare = json!([{"id": 1, "name": "Comics", "kind": "comics", "root": "L:/x"}]);
+        assert_eq!(list_of(&bare).map(|l| l.len()), Some(1));
     }
 
     #[test]

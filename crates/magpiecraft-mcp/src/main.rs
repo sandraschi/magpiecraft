@@ -199,10 +199,11 @@ enum Cmd {
     /// Build a rename plan. Nothing changes until the plan is applied.
     PlanRename {
         library: Option<String>,
-        /// comics or manga.
-        #[arg(long, default_value = "comics")]
+        /// auto (per item kind), comics, manga or video.
+        #[arg(long, default_value = "auto")]
         preset: String,
-        #[arg(long, default_value_t = 5000)]
+        /// 0 means every item in the library.
+        #[arg(long, default_value_t = 0)]
         limit: usize,
     },
     /// Build a quarantine plan for one item (a move, never a delete).
