@@ -1,0 +1,23 @@
+[package]
+name = "magpiecraft-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MagpieCraft desktop app (egui): library grid and comics reader"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "magpiecraft"
+path = "src/main.rs"
+
+[dependencies]
+magpiecraft-core = { path = "../magpiecraft-core" }
+serde.workspace = true
+serde_json.workspace = true
+image.workspace = true
+eframe.workspace = true
+egui.workspace = true
+clap.workspace = true
