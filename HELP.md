@@ -1,0 +1,95 @@
+# MagpieCraft help
+
+## What it is
+
+A native app, a command line and an MCP server for the comics, manga and media files you already have
+on disk. It indexes them, shows them as a library with covers, and reads them.
+
+It does not download anything, does not bypass copy protection, and never changes a file in your
+collection.
+
+## First run
+
+1. `File > Add library...` and point it at a folder. Name it, pick a kind (comics or manga matters: it
+   sets the reading direction), and flag it mature if you want it hidden.
+2. `File > Scan all libraries`. The status bar shows "scanning..." and the grid fills in.
+3. Click a folder to walk into it, click a volume to read it.
+
+## Keys
+
+| Key | Action |
+|---|---|
+| Right / Left arrow | Page forward / back (swapped in right-to-left mode) |
+| Space / Shift + Space | Page forward / back |
+| Down / Up arrow | Page forward / back |
+| H | Half-page mode: top half, then bottom half with 12 percent overlap |
+| T | Two-page spread, with the cover alone on the first screen |
+| R | Right to left for this item (remembered) |
+| Home / End | First / last page |
+| Escape | Back to the library |
+| / | Jump to the search box |
+| Ctrl + mouse wheel | Zoom the whole window, 60 to 250 percent |
+
+## Toolbar
+
+- **Prev / Next** page, with `7 / 220` or `8-9 / 220` between them.
+- **Two pages**, **Half page**, **RTL**: the three reading modes. Turning one on turns the other off
+  where they conflict.
+- **Fit: page / width**: fit the whole page, or fill the width and clip the tall part. Use width when
+  the lettering is small.
+- **Offset - / +**: the difference between the printed page numbers and the order of the pages in the
+  file. If printed page 1 is the fifth scan, set the offset to 4. It is remembered per item.
+- **Printed page**: type a number and press Enter to jump there, offset applied.
+
+## The library grid
+
+- **Breadcrumbs** across the top: click any part to go back up.
+- **Filter this folder** narrows the grid as you type, like the prototype.
+- **Search whole collection** (or `/`) matches every word you type against titles, series and paths.
+  Prefix search first, substring search if that finds nothing.
+- **Continue reading** appears at the top when you have unfinished items.
+- A folder card shows its first readable item as its cover and how many volumes it holds.
+
+## What is not built yet
+
+The app is honest about this rather than showing an empty page:
+
+- CBR, RAR, CB7 and 7Z are indexed with their size and title, but page reading is not built. The
+  message says so.
+- PDF page counts come from PdfCraft; page rendering in the reader is next.
+- AVIF images are indexed, and the decoder is a pending decision.
+- No identify/tag/rename yet, no NFO or artwork, no conversions, no remote servers.
+
+## Settings
+
+`Window > Settings` or `Edit > Settings`:
+
+- Show mature-flagged libraries (off by default; they are also excluded from search while off).
+- Images needed for a folder to count as a volume (default 3).
+- Theme and zoom.
+
+Storage paths are listed there too. Deleting the cache folder is always safe.
+
+## Where things live
+
+`%LOCALAPPDATA%\magpiecraft` unless `MAGPIECRAFT_HOME` says otherwise: `catalogue.db`,
+`settings.json`, `cache/covers`, `manifests`. Your libraries are never written to.
+
+## Help menu
+
+- Command Palette... - type a command, no mouse needed.
+- Keyboard Shortcuts... - the table above.
+- Project Files and Docs... - which document answers which question.
+- Licenses and Notices... - licences of this app and of the tools it invokes.
+- About MagpieCraft - version and where the catalogue is.
+
+## Common problems
+
+| Symptom | Cause and fix |
+|---|---|
+| Grid stays empty after Add library | You have not scanned yet: `File > Scan all libraries` |
+| "no cover" on a card | The first page cannot be decoded: CBR/RAR, PDF, AVIF, or a damaged page |
+| A library disappeared | It is flagged mature and mature content is off in Settings |
+| A library shows as unreachable | The drive is unplugged. The index and your progress are intact |
+| Text is small | Ctrl + wheel, or `View > Zoom 100%` |
+| Scan seems stuck | It is single-threaded for now; a 100,000-file tree takes under a second to walk but first-time page counts open every archive once |

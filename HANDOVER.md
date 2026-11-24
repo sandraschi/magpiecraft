@@ -1,0 +1,105 @@
+---
+updated: 2026-11-24T14:40:00+01:00
+agent: opencode-deepseek
+status: in-progress
+tier: "Tier 1 built, Tier 1 exit review pending"
+---
+
+# MagpieCraft handover
+
+## What is happening
+
+Session A (opencode, DeepSeek V4 Flash) built Tier 0 and Tier 1 of MagpieCraft per
+`mcp-central-docs/projects/craft-handover-2026-11-24/HANDOVER_AGY.md` (tasks A0 and A1) and
+`WEEK_PLAN_OPENCODE.md`. The comics reader was built first, then inventory and search, as the week plan
+asked.
+
+Tier 2 (A2: identify, tag, rename, CBR/RAR and PDF pages) has **not** been started. Per the week plan it
+waits for the other session to review this Tier 1 exit.
+
+## Last concrete action
+
+Wrote the documentation set, ran the gates (`cargo test --workspace` 116 passed, clippy clean with the
+deny lints, fmt clean), probed the MCP stdio surface, measured the 100,000-file scan benchmark, and
+registered the 13 collection libraries in the real data home. A first full scan of the collection was
+started in the background and was still running when this file was written; it is resumable and
+incremental.
+
+## Next step
+
+1. Verify the Tier 1 exit independently (see "Verification" below). Do not fix what you find here: log
+   it, then hand it back, per the craft rule that nobody verifies their own work.
+2. If the review passes, start A2 in this order: CBR/RAR page reading (7-Zip subprocess) and PDF pages
+   (PdfCraft `render`, cached), then identify and tag for video/music/books/comics, then the rename plan
+   with diff and undo journal, then `magpie-adapters` Jellyfin and OPDS read-only.
+
+## Verification (for the reviewer)
+
+```powershell
+git clone https://github.com/sandraschi/magpiecraft
+cd magpiecraft
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace                      # expect 116 passed
+cargo run -q -p magpiecraft-app -- --smoke  # headless app wiring
+magpiecraft-mcp.exe status --json
+```
+
+Then check the two behavioural claims against the prototype at `http://127.0.0.1:8766/`:
+
+- `docs/READER_PARITY.md` lists every scenario with the test that locks it. Open a real volume in both
+  and compare spreads, half page, RTL and the page offset.
+- Covers: the grid should look like the prototype's, folders using their first item.
+
+## Blockers
+
+None. Two known limits are deliberate and documented rather than blockers:
+
+- CBR/RAR and PDF pages are indexed but not readable (Tier 2), and say so.
+- The scan is single-threaded. 100,000 files walk in 478 ms; the slow part is the first-time page count
+  of every archive and every PDF (one `pdfcraft-cli` process each).
+
+## Context the next agent needs
+
+- Item identity is `lib:<library id>|<path relative to root>`. Progress survives a drive letter change
+  because of that, so do not switch to absolute paths.
+- A missing file is marked, never deleted. Browse and search exclude missing rows; statistics count
+  them separately. Keep that when adding the rename journal.
+- `magpiecraft-store` holds plain row types; `magpiecraft-core` holds the model and the engine. The
+  engine is the only place that touches DB, filesystem and external tools together. Keep the direction
+  `core -> leaves`; do not add a cycle.
+- `magpie-adapters` must stay dependency-free of this workspace (decision D2, HomeServeCraft will pin
+  it as a git dependency).
+- The reader's layout maths are pure functions in `magpiecraft-comics::reader`. Any behaviour change
+  goes there with a test, not in the egui code.
+- The UI glyph rule is enforced by a test: ASCII plus `° × · …` only, everything else is painted as a
+  vector or written in words. Adding an arrow character will fail `cargo test`.
+- On Windows, drop the `Catalog` before deleting a temp directory in a test, or SQLite keeps the file
+  locked (error 32).
+- The real data home is `%LOCALAPPDATA%\magpiecraft`; `MAGPIECRAFT_HOME` overrides it and the smoke
+  tests use it. Sandra's 13 libraries are registered there.
+
+## Deliberately not done
+
+- **Tier 2 of any kind.** Waiting for the Tier 1 review, per the week plan.
+- **Installer, .mcpb, release assets.** Release tier work; the repo has no release and no version above
+  0.1.0.
+- **egui_kittest golden snapshots.** Tier 4 in the fleet standard; the reader maths are unit-tested
+  instead and `--smoke` proves the headless wiring.
+- **OPDS listener.** Tier 2 decision, and it would be the only port in the product.
+- **Physical shelf catalogue, conversions, knowledge graph, source guide.** Pillars B to F, later tiers.
+- **Threading the scan.** Measured first; 478 ms for 100,000 files did not justify a pool yet.
+
+## Where things are
+
+| Path | What |
+|---|---|
+| `docs/ARCHITECTURE.md` | Crates, command bus, schema, scanning contract |
+| `docs/TOOLS.md` | CLI and MCP reference |
+| `docs/READER_PARITY.md` | Prototype scenarios, test mapping, deliberate differences |
+| `docs/BENCHMARKS.md` | Measured numbers |
+| `docs/DEVELOPMENT.md` | Gates, fixtures, known debt |
+| `mcp-central-docs/projects/mediacraft/PRD.md` | The binding PRD (v2) |
+| `mcp-central-docs/projects/comiccraft/PRD.md` | Comics module scope |
+| `mcp-central-docs/operations/session-log/craft-opencode-2026-11-24.md` | This session's log |
