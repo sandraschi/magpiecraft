@@ -47,8 +47,32 @@ folder whose name starts with the marker ("Vol 1 Moss and Rain") now keeps its v
 the middle of a name ("Alef Thau - 01 - L'enfant Tronc") is a volume with the rest kept as a subtitle,
 so a rename no longer throws a subtitle away.
 
-Still open in A2: identify from metadata (local dumps first, then APIs with per-provider limits), NFO
-and artwork writing, tag writing, Jellyfin/OPDS clients, OPDS server.
+Still open in A2: identify from metadata (local dumps first: GCD, MangaBaka, the user's own Heavy Metal
+catalogue; then Open Library and MusicBrainz with per-provider limiters and provenance), NFO and
+artwork writing, tag writing, the Jellyfin/OPDS clients, the OPDS server.
+
+## Tier 2, third block: every kind, not just comics
+
+Sandra corrected the concept ("magpiecraft is not just for comics"), and she was right: the scanner
+only turned comic containers into items, so 17,328 video files and 14,051 books were walked and
+dropped. Fixed properly:
+
+- `scan::family_of` classifies archives, PDFs, images, video, audio, ebooks and subtitles;
+  `core::classify_item` combines that with the library kind. Schema 4 adds `items.media_kind` with a
+  data migration that backfills old rows from their library kind.
+- Kinds are first-class: statistics per kind, kind-aware page reasons ("video is played in mpv,
+  Jellyfin or the OS"), kind-aware headings and cards ("VIDEOS (7)", a film card says "video").
+- Presets follow the kind: films by title and year (release tags dropped, text after the year kept),
+  TV episodes by series folder and SxxExx (season 0 specials included), comics and manga as before.
+  Books and music are skipped with a reason instead of guessed.
+- Book PDFs no longer get a page count probed, so a book library scans in seconds.
+
+Measured: 44,493 items across 17 libraries, 5.0 TiB, 1,696,651 pages. Video library 7.8 s for 17,399
+items; the Calibre book library 11.1 s for 14,320. The video planner proposes 545 in-place renames and
+reports 16,785 skips.
+
+Also fixed: `magpiecraft-mcp libraries` printed "no libraries yet" because `dispatch` wraps list
+results; the printer now looks inside `value`. 146 tests, clippy and fmt clean.
 
 ## Next step
 

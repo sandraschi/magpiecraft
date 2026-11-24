@@ -91,6 +91,22 @@ Measured on a 2-page extraction of a real 60 MB CBR (`Tardi - #02 Le Der des Der
 The extraction happens once per archive and is cached, so a reading session pays it once. The cache is
 capped (8 GiB by default) and evicts the oldest extractions first.
 
+## Indexing the other kinds
+
+The same collection, scanning the libraries the first pass did not know how to index:
+
+| Library | Kind | Items | Wall time |
+|---|---|---|---|
+| Video | video | 17,399 | **7.8 s** |
+| Written Word (a Calibre library) | ebook | 14,320 | **11.1 s** |
+| Anime - Movies | video | 1 | 6 ms |
+| 4k video downloader | video | 12 | 11 ms |
+
+No archive is opened for these: a video, a track or a book is one stat call and one row. The catalogue
+went from 12,761 items to **44,493 items, 5.0 TiB**, with 1,696,651 pages (all of them comics and manga).
+
+Kinds after the pass: 17,381 video, 14,113 ebook, 9,211 manga, 3,550 comics, 238 audio.
+
 ## Known costs and where they will go
 
 | Cost | Today | Plan |
