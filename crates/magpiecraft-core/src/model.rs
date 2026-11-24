@@ -342,7 +342,11 @@ mod tests {
         assert_eq!(root.as_string(), "lib:7|");
         assert!(root.is_root());
         assert_eq!(ItemKey::parse("lib:7|"), Some(root.clone()));
-        assert_eq!(ItemKey::parse("lib:7"), Some(root), "no pipe means the root");
+        assert_eq!(
+            ItemKey::parse("lib:7"),
+            Some(root),
+            "no pipe means the root"
+        );
     }
 
     #[test]
