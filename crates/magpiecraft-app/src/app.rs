@@ -105,8 +105,9 @@ impl MagpieApp {
         theme::apply_text_styles(&cc.egui_ctx);
         let settings = catalog.settings().clone();
         let dark = settings.theme != "light";
+        let zoom = settings.zoom.clamp(0.6, 2.5);
         cc.egui_ctx.set_visuals(theme::visuals(dark));
-        cc.egui_ctx.set_zoom_factor(settings.zoom.clamp(0.6, 2.5));
+        cc.egui_ctx.set_zoom_factor(zoom);
         let mut app = MagpieApp {
             settings,
             page: Page::Browse,
@@ -122,7 +123,7 @@ impl MagpieApp {
             stats: None,
             status: String::new(),
             dark,
-            zoom: cc.egui_ctx.zoom_factor(),
+            zoom,
             applied_theme: Some(dark),
             dialog: Dialog::None,
             palette_filter: String::new(),
@@ -930,45 +931,82 @@ impl eframe::App for MagpieApp {
         }
         let mut actions: Vec<Act> = Vec::new();
 
-        egui::Panel::top("magpie-menu").show(ui, |ui| {
-            self.top_bar(ui, &mut actions);
-            ui.separator();
-            self.search_row(ui);
-        });
-        egui::Panel::bottom("magpie-status").show(ui, |ui| {
-            self.status_bar(ui);
-        });
-        egui::CentralPanel::default().show(ui, |ui| match self.page {
-            Page::Browse => {
-                let nav = library::show(ui, &mut self.browse, &mut self.covers, &mut self.catalog);
-                match nav {
-                    Nav::Open(key) => {
-                        self.browse_key = key;
-                        self.browse.search = None;
+        // `App::ui` hands over an unbounded Ui, so panels do not size themselves.
+        // Lay the chrome out in flow and give the page and the status bar explicit
+        // rects taken from the real window rect.
+        self.top_bar(ui, &mut actions);
+        ui.separator();
+        self.search_row(ui);
+        ui.separator();
+
+        let window = ctx.content_rect();
+        let status_height = 26.0;
+        let content = egui::Rect::from_min_max(
+            egui::pos2(window.left(), ui.cursor().top()),
+            egui::pos2(
+                window.right(),
+                (window.bottom() - status_height).max(ui.cursor().top() + 80.0),
+            ),
+        );
+        let status = egui::Rect::from_min_max(
+            egui::pos2(window.left(), content.bottom()),
+            egui::pos2(window.right(), window.bottom()),
+        );
+
+        ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+            match self.page {
+                Page::Browse => {
+                    let nav = egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            library::show(ui, &mut self.browse, &mut self.covers, &mut self.catalog)
+                        })
+                        .inner;
+                    match nav {
+                        Nav::Open(key) => {
+                            self.browse_key = key;
+                            self.browse.search = None;
+                            self.refresh();
+                        }
+                        Nav::Read(key) => self.open_reader(key),
+                        Nav::None => {}
+                    }
+                }
+                Page::Reader => {
+                    let mut back = false;
+                    if let Some(reader) = self.reader.as_mut() {
+                        if let Action::Back = reader.show(ui, &mut self.catalog, content) {
+                            back = true;
+                        }
+                    } else {
+                        ui.label("No item is open.");
+                    }
+                    if back {
+                        self.page = Page::Browse;
+                        self.reader = None;
                         self.refresh();
                     }
-                    Nav::Read(key) => self.open_reader(key),
-                    Nav::None => {}
+                }
+                Page::Stats => {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.stats_page(ui));
+                }
+                Page::Settings => {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.settings_page(ui, &mut actions));
+                }
+                Page::Help => {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.help_page(ui));
                 }
             }
-            Page::Reader => {
-                let mut back = false;
-                if let Some(reader) = self.reader.as_mut() {
-                    if let Action::Back = reader.show(ui, &mut self.catalog) {
-                        back = true;
-                    }
-                } else {
-                    ui.label("No item is open.");
-                }
-                if back {
-                    self.page = Page::Browse;
-                    self.reader = None;
-                    self.refresh();
-                }
-            }
-            Page::Stats => self.stats_page(ui),
-            Page::Settings => self.settings_page(ui, &mut actions),
-            Page::Help => self.help_page(ui),
+        });
+
+        ui.scope_builder(egui::UiBuilder::new().max_rect(status), |ui| {
+            self.status_bar(ui);
         });
 
         self.apply_actions(actions, &ctx);

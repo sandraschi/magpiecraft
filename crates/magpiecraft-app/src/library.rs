@@ -347,11 +347,21 @@ fn placeholder_paint(ui: &egui::Ui, rect: egui::Rect) {
 
 fn card_label(ui: &mut egui::Ui, title: &str, sub: &str) -> egui::Response {
     ui.add_space(3.0);
-    let title_response = ui.add(
-        egui::Label::new(egui::RichText::new(title).size(13.5))
-            .wrap()
-            .sense(egui::Sense::click()),
-    );
+    // Two lines are reserved for the title so the subtitle lines up across a row.
+    let width = ui.available_width().max(40.0);
+    let title_response = ui
+        .allocate_ui_with_layout(
+            egui::vec2(width, 34.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(title).size(13.5))
+                        .wrap()
+                        .sense(egui::Sense::click()),
+                )
+            },
+        )
+        .inner;
     ui.label(
         egui::RichText::new(sub)
             .size(11.5)

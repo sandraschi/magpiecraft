@@ -28,20 +28,33 @@ one row check per volume.
 
 This is the number the PRD's "100,000-file synthetic scan benchmark" asks for.
 
-## First scan of a real library
+## First scan of the real collection
 
-`L:\Multimedia Files\Comics - French`, 55 files (34 CBR, 15 PDF, 6 CBZ), 993 MiB:
+The reference collection (`L:\Multimedia Files`, 13 libraries, 661 GiB), scanned once with the release
+build on 2026-11-24:
 
-| Metric | Value |
-|---|---|
-| Items | 55 |
-| Pages | 1,178 |
-| Directories | 13 |
-| Scan time | 7,279 ms |
+| Library | Items | Pages | Size | First scan |
+|---|---:|---:|---:|---:|
+| Comics | 930 | 65,005 | 34.2 GiB | 243 s |
+| Comics 3 | 1,111 | 13,881 | 49.3 GiB | 52 s |
+| Comics - Superhero | 420 | 4,552 | 6.9 GiB | 18 s |
+| Comics - French | 55 | 1,178 | 993 MiB | 4 s |
+| Comics - German | 86 | 4,326 | 1.6 GiB | 36 s |
+| Comics - SP & IT | 131 | 6,071 | 2.4 GiB | 56 s |
+| Comics - Newspaper | 805 | 1,543 | 14.5 GiB | 9 s |
+| Manga | 2,874 | 337,878 | 151.9 GiB | 996 s |
+| Manga - Nihongo | 5,709 | 1,050,808 | 375.1 GiB | 2,661 s |
+| Manga - TG | 393 | 29,823 | 6.2 GiB | 45 s |
+| Manga - TG Nihongo | 181 | 31,284 | 11.7 GiB | 79 s |
+| Manga - Sukebe (mature) | 54 | 8,057 | 6.0 GiB | 38 s |
+| Comics - Porn (mature) | 12 | 549 | 313 MiB | 2 s |
+| **Total** | **12,761** | **1,554,955** | **661 GiB** | **70.6 min** |
 
-Why it is slower per file than the synthetic run: every new item is opened once. The six CBZ archives
-are read for their page list and ComicInfo.xml; the fifteen PDFs ask `pdfcraft-cli info` for a page
-count, and process start-up dominates that call. Re-scanning the same library skips all of them.
+Where the time goes: the two manga libraries alone hold about 1.4 million loose page images in folders,
+and every new item is opened once for its page list or its PDF page count. A second scan of the same
+collection skips every unchanged item, so it is a tree walk plus one index lookup per volume.
+
+Cover thumbnails are generated lazily, only for cards on screen, at three per frame.
 
 ## Known costs and where they will go
 

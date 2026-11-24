@@ -33,7 +33,7 @@ Added:
 - egui desktop app: library grid with covers, breadcrumbs, folder filter, continue-reading row,
   whole-collection search, reader with spreads, half page, RTL, page jump, offset, progress, keyboard,
   Ctrl + wheel zoom, dark and light high-contrast themes, menu bar with the five-item Help suite.
-- 116 tests, clippy clean with the deny gates, fmt clean, MCP probe verified.
+- 117 tests, clippy clean with the deny gates, fmt clean, MCP probe verified.
 
 Not in this version (see the README matrix): CBR/RAR and PDF page reading, identify/tag/rename,
 near-duplicates, backup planner, conversions, federated sources, the collection guide, installer.

@@ -978,7 +978,12 @@ impl Store {
 
     /// Items at or below a folder, for the "N volumes" line on a folder card.
     pub fn count_items_under(&self, library_id: i64, rel: &str) -> StoreResult<usize> {
-        let pattern = format!("{}/%", rel.replace('%', "\\%"));
+        // The library root is the empty relative path: every item is below it.
+        let pattern = if rel.is_empty() {
+            "%".to_string()
+        } else {
+            format!("{}/%", rel.replace('%', "\\%"))
+        };
         let n: i64 = self
             .conn
             .query_row(
@@ -1243,5 +1248,21 @@ mod tests {
         let (_, _) = s.upsert_item(&item("a/b c.cbz", "B", 10)).unwrap();
         let row = s.item_by_rel(1, "a/b c.cbz").unwrap().unwrap();
         assert_eq!(row.key(), "lib:1|a/b c.cbz");
+    }
+
+    #[test]
+    fn counting_under_the_root_counts_everything() {
+        let mut s = store();
+        s.add_library("L", "D:/x", "comics", false, None).unwrap();
+        s.upsert_item(&item("a/one.cbz", "one", 1)).unwrap();
+        s.upsert_item(&item("b/two.cbz", "two", 2)).unwrap();
+        s.upsert_item(&item("three.cbz", "three", 3)).unwrap();
+        assert_eq!(
+            s.count_items_under(1, "").unwrap(),
+            3,
+            "the root holds everything"
+        );
+        assert_eq!(s.count_items_under(1, "a").unwrap(), 1);
+        assert_eq!(s.count_items_under(1, "three.cbz").unwrap(), 1);
     }
 }

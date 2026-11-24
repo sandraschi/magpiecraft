@@ -25,7 +25,7 @@ cargo test --workspace
 cargo run -q -p magpiecraft-app -- --smoke
 ```
 
-Expected: 116 tests pass (2026-11-24), clippy clean with the deny gates, fmt clean.
+Expected: 117 tests pass (2026-11-24), clippy clean with the deny gates, fmt clean.
 
 Probe the MCP surface after any change to tools or the command bus:
 
@@ -39,6 +39,26 @@ $exe = ".\target\debug\magpiecraft-mcp.exe"
 ```
 
 Three responses, no log text on stdout.
+
+## Screenshots and the UI without a human
+
+Two scripts make the window verifiable by an agent:
+
+```powershell
+pwsh -File scripts/make-demo-library.ps1          # 5 synthetic volumes in data/demo
+magpiecraft-mcp --home data/demo-home library-add Demo data/demo --kind comics
+magpiecraft-mcp --home data/demo-home scan
+cargo build --release -p magpiecraft-app
+pwsh -File scripts/capture-window.ps1 -DataHome data/demo-home -Key "lib:1|" -Name library-grid
+pwsh -File scripts/capture-window.ps1 -DataHome data/demo-home -Key "lib:1|Neon Tales/Neon Tales v01 The Long Night.cbz" -Name reader-page
+```
+
+`capture-window.ps1` marks itself DPI aware first. Without that, `GetWindowRect` returns virtualised
+coordinates, the bitmap is smaller than the window, and the capture is clipped: the layout looks broken
+when it is not. It finds the window by title, captures with `PrintWindow` (which works for this wgpu
+window), and falls back to a screen copy if the frame comes back dark.
+
+The demo library is generated, never copyrighted, and `data/` is gitignored.
 
 ## Tests
 

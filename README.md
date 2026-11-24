@@ -15,6 +15,15 @@ command bus in process.
 > licensed dumps and official APIs under their terms. Issues and pull requests that add any of the
 > above are rejected.
 
+## Preview
+
+| Library grid | Folders with covers | Reader |
+|---|---|---|
+| ![Library grid](docs/screenshots/library-grid.png) | ![Folders](docs/screenshots/browse-volumes.png) | ![Reader](docs/screenshots/reader-page.png) |
+
+Screenshots come from the synthetic demo library (`scripts/make-demo-library.ps1`), never from a real
+collection, so no copyrighted page is published. How to reproduce them: `docs/DEVELOPMENT.md`.
+
 ## What it does today
 
 - Scans libraries of CBZ/ZIP archives and numbered page folders, incrementally by path, size and mtime.
@@ -161,7 +170,7 @@ Nothing is ever written into a library. Covers, caches and manifests live here.
 
 Measured 2026-11-24 on the Tier 1 commit:
 
-- `cargo test --workspace`: **116 passed**, 0 failed
+- `cargo test --workspace`: **117 passed**, 0 failed
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean
   (`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented` denied workspace-wide)
 - `cargo fmt --all --check`: clean

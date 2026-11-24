@@ -99,6 +99,13 @@ fn scan_indexes_archives_and_page_folders() {
     assert_eq!(browse.total_folders, 3, "Saga, Berserk, Yotsuba");
     assert_eq!(browse.total_items, 1, "the loose archive in the root");
     assert_eq!(browse.crumbs.len(), 2);
+    // The libraries overview counts what is below each root.
+    let overview = c.browse(None).unwrap();
+    assert_eq!(overview.folders.len(), 1);
+    assert_eq!(
+        overview.folders[0].items, 5,
+        "five readable items below the root"
+    );
     drop(c);
     std::fs::remove_dir_all(&home).unwrap();
     std::fs::remove_dir_all(&root).unwrap();

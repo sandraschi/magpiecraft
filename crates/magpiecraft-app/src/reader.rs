@@ -213,7 +213,12 @@ impl ReaderView {
         self.reader.set_settings(settings);
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, catalog: &mut Catalog) -> Action {
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        catalog: &mut Catalog,
+        viewport: egui::Rect,
+    ) -> Action {
         let mut action = Action::None;
         if let Some(loader) = self.loader.as_mut() {
             loader.poll(ui.ctx());
@@ -258,14 +263,18 @@ impl ReaderView {
             }
         }
 
-        let avail = ui.available_size();
+        // Every rect below is absolute, derived from the real window rect handed in
+        // by the shell. The reader does not use the layout cursor for the page area:
+        // a reader paints the page, it does not flow widgets.
+        let top = ui.cursor().top();
+        let canvas = egui::Rect::from_min_max(
+            egui::pos2(viewport.left() + 4.0, top),
+            egui::pos2(viewport.right() - 4.0, viewport.bottom() - 4.0),
+        );
+        let avail = canvas.size();
         let gap = 6.0;
         let n = slots.len().max(1) as f32;
         let column = ((avail.x - gap * (n - 1.0)) / n).max(40.0);
-        let (canvas, _) = ui.allocate_exact_size(
-            egui::vec2(avail.x.max(40.0), avail.y.max(40.0)),
-            egui::Sense::hover(),
-        );
         let mut x = canvas.left();
         for slot in &slots {
             let slot_rect = egui::Rect::from_min_size(
