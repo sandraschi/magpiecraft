@@ -1,0 +1,17 @@
+[package]
+name = "magpiecraft-comics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MagpieCraft comics engine: CBZ/ZIP and page folders, ComicInfo.xml, series grouping, reader layout"
+
+[lints]
+workspace = true
+
+[dependencies]
+magpiecraft-scan = { path = "../magpiecraft-scan" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zip.workspace = true
