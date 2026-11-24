@@ -304,12 +304,7 @@ impl MagpieApp {
                     self.page = Page::Organise;
                 }
                 Act::PlanRename => {
-                    let preset = self
-                        .browse
-                        .browse
-                        .kind
-                        .map(|_| "comics")
-                        .unwrap_or("comics");
+                    let preset = "auto";
                     match self.catalog.plan_rename(None, preset, 5000) {
                         Ok(value) => {
                             let count = value["operations"].as_u64().unwrap_or(0);
@@ -1285,7 +1280,7 @@ fn empty_browse() -> magpiecraft_core::BrowseView {
     }
 }
 
-fn human_bytes(n: i64) -> String {
+pub(crate) fn human_bytes(n: i64) -> String {
     let mut value = n as f64;
     let mut unit = 0usize;
     while value >= 1024.0 && unit < 4 {

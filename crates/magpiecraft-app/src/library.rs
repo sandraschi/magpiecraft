@@ -109,7 +109,7 @@ pub fn show(
                     let title = entry.get("title").and_then(Value::as_str).unwrap_or("");
                     let page = entry.get("page").and_then(Value::as_i64).unwrap_or(0);
                     let total = entry.get("total").and_then(Value::as_i64).unwrap_or(0);
-                    cover(ui, width, key, covers, catalog);
+                    cover(ui, width, key, covers, catalog, None);
                     let label = if total > 0 {
                         format!("{title}  p.{page}/{total}")
                     } else {
@@ -137,7 +137,7 @@ pub fn show(
             for folder in &visible {
                 with_card(ui, |ui, width| {
                     match &folder.cover_key {
-                        Some(cover_key) => cover(ui, width, cover_key, covers, catalog),
+                        Some(cover_key) => cover(ui, width, cover_key, covers, catalog, None),
                         None => placeholder(ui, width),
                     }
                     let label = folder.name.clone();
@@ -164,12 +164,31 @@ pub fn show(
             .collect();
         section(
             ui,
-            &format!("Volumes and issues ({})", state.browse.items.len()),
+            &items_heading(state.browse.kind, state.browse.items.len()),
         );
         ui.horizontal_wrapped(|ui| {
             for item in &visible {
+                let comicish = matches!(
+                    item.kind,
+                    magpiecraft_core::MediaKind::Comics
+                        | magpiecraft_core::MediaKind::Manga
+                        | magpiecraft_core::MediaKind::Magazines
+                );
                 with_card(ui, |ui, width| {
-                    cover(ui, width, &item.key, covers, catalog);
+                    if comicish {
+                        cover(ui, width, &item.key, covers, catalog, None);
+                    } else {
+                        // A film or a book has no page to use as a cover, so the card
+                        // says what it is instead of asking for an image that cannot exist.
+                        cover(
+                            ui,
+                            width,
+                            &item.key,
+                            covers,
+                            catalog,
+                            Some(item.kind.as_str()),
+                        );
+                    }
                     let sub = item_subtitle(item);
                     if card_label(ui, &item.title, &sub).clicked() {
                         nav = Nav::Read(item.key.clone());
@@ -195,18 +214,28 @@ pub fn show(
 }
 
 fn item_subtitle(item: &magpiecraft_core::ItemView) -> String {
-    let pages = match item.page_count {
-        Some(p) => format!("{p} p"),
-        None => "unknown pages".to_string(),
-    };
-    let mut parts = vec![pages];
-    if let Some(series) = &item.series {
-        if !series.is_empty() {
-            parts.push(series.clone());
+    let mut parts: Vec<String> = Vec::new();
+    match item.kind {
+        magpiecraft_core::MediaKind::Comics
+        | magpiecraft_core::MediaKind::Manga
+        | magpiecraft_core::MediaKind::Magazines => {
+            parts.push(match item.page_count {
+                Some(p) => format!("{p} p"),
+                None => "unknown pages".to_string(),
+            });
+            if let Some(series) = &item.series {
+                if !series.is_empty() {
+                    parts.push(series.clone());
+                }
+            }
+            if !item.readable {
+                parts.push(format!("{} (not readable yet)", item.container.as_str()));
+            }
         }
-    }
-    if !item.readable {
-        parts.push(format!("{} (not readable yet)", item.container.as_str()));
+        other => {
+            parts.push(other.as_str().to_string());
+            parts.push(crate::app::human_bytes(item.size));
+        }
     }
     if let Some(progress) = &item.progress {
         parts.push(format!("p.{}", progress.page));
@@ -222,6 +251,21 @@ fn section(ui: &mut egui::Ui, title: &str) {
             .color(theme::dim_text(ui)),
     );
     ui.add_space(2.0);
+}
+
+/// Section heading for the items on screen, in the words of the kind on screen.
+fn items_heading(kind: Option<magpiecraft_core::MediaKind>, count: usize) -> String {
+    let noun = match kind {
+        Some(magpiecraft_core::MediaKind::Comics)
+        | Some(magpiecraft_core::MediaKind::Manga)
+        | Some(magpiecraft_core::MediaKind::Magazines) => "Volumes and issues",
+        Some(magpiecraft_core::MediaKind::Video) => "Videos",
+        Some(magpiecraft_core::MediaKind::Audio) => "Tracks",
+        Some(magpiecraft_core::MediaKind::Ebook) => "Books",
+        Some(magpiecraft_core::MediaKind::Photo) => "Photos",
+        _ => "Items",
+    };
+    format!("{noun} ({count})")
 }
 
 fn crumbs(ui: &mut egui::Ui, state: &mut BrowseState, nav: &mut Nav) {
@@ -268,7 +312,14 @@ fn with_card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui, f32)) {
     ui.add_space(CARD_GAP - 12.0);
 }
 
-fn cover(ui: &mut egui::Ui, width: f32, key: &str, covers: &mut CoverCache, catalog: &mut Catalog) {
+fn cover(
+    ui: &mut egui::Ui,
+    width: f32,
+    key: &str,
+    covers: &mut CoverCache,
+    catalog: &mut Catalog,
+    fallback: Option<&str>,
+) {
     let height = width * 1.5;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let dark = ui.visuals().dark_mode;
@@ -278,6 +329,24 @@ fn cover(ui: &mut egui::Ui, width: f32, key: &str, covers: &mut CoverCache, cata
         theme::LIGHT_CARD
     };
     ui.painter().rect_filled(rect, 3.0, bg);
+    if let Some(label) = fallback {
+        // Not a page container: say what it is rather than asking for a cover that
+        // cannot exist (a film, a book, a track).
+        ui.painter().rect_stroke(
+            rect,
+            3.0,
+            egui::Stroke::new(1.0, theme::dim_text(ui)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(13.0),
+            theme::dim_text(ui),
+        );
+        return;
+    }
     if let Some(tex) = covers.texture(key) {
         let size = tex.size_vec2();
         if size.x > 0.0 && size.y > 0.0 {
@@ -390,7 +459,7 @@ fn search_results(
     ui.horizontal_wrapped(|ui| {
         for hit in &search.hits {
             with_card(ui, |ui, width| {
-                cover(ui, width, &hit.key, covers, catalog);
+                cover(ui, width, &hit.key, covers, catalog, None);
                 let library = if hit.where_.is_empty() {
                     hit.library.clone()
                 } else {
