@@ -65,6 +65,8 @@ pub struct ItemRow {
     pub confidence: f64,
     /// True when the parse was below the review threshold.
     pub needs_review: bool,
+    /// What this item is: video, audio, ebook, comics, manga, magazines, photo, other.
+    pub media_kind: String,
     pub comic_info: bool,
     pub hash: Option<String>,
     pub missing: bool,
@@ -99,6 +101,8 @@ pub struct NewItem {
     pub confidence: f64,
     /// Whether the item belongs in the review queue.
     pub needs_review: bool,
+    /// What this item is, from its own format or its library's kind.
+    pub media_kind: String,
 }
 
 /// Result of an upsert: whether the row was created or actually changed.
@@ -212,6 +216,18 @@ impl Store {
             store
                 .conn
                 .execute_batch(schema::MIGRATE_1_TO_2)
+                .map_err(StoreError::sqlite)?;
+        }
+        if version < 3 {
+            store
+                .conn
+                .execute_batch(schema::MIGRATE_2_TO_3)
+                .map_err(StoreError::sqlite)?;
+        }
+        if version < 4 {
+            store
+                .conn
+                .execute_batch(schema::MIGRATE_3_TO_4)
                 .map_err(StoreError::sqlite)?;
         }
         store.set_meta("schema_version", SCHEMA_VERSION)?;
@@ -427,7 +443,7 @@ impl Store {
         "SELECT i.id, i.library_id, i.rel, i.parent, i.name, i.title, i.container, i.size,
                 i.mtime, i.page_count, i.series_id, s.title, i.volume, i.rtl, i.comic_info,
                 i.hash, i.missing, i.updated_at, s.rtl, i.page_offset,
-                i.confidence, i.needs_review
+                i.confidence, i.needs_review, i.media_kind
          FROM items i LEFT JOIN series s ON s.id = i.series_id"
     }
 
@@ -455,6 +471,7 @@ impl Store {
             page_offset: r.get(19)?,
             confidence: r.get(20)?,
             needs_review: r.get::<_, i32>(21)? != 0,
+            media_kind: r.get(22)?,
         })
     }
 
@@ -506,7 +523,7 @@ impl Store {
                              mtime = ?7, page_count = COALESCE(?8, page_count), series_id = ?9,
                              volume = COALESCE(?10, volume), rtl = COALESCE(?11, rtl),
                              comic_info = MAX(comic_info, ?12), confidence = ?14,
-                             needs_review = ?15, missing = 0, updated_at = ?13
+                             needs_review = ?15, media_kind = ?16, missing = 0, updated_at = ?13
                          WHERE id = ?1",
                         params![
                             id,
@@ -523,7 +540,8 @@ impl Store {
                             i32::from(item.comic_info),
                             now(),
                             item.confidence,
-                            i32::from(item.needs_review)
+                            i32::from(item.needs_review),
+                            item.media_kind
                         ],
                     )
                     .map_err(StoreError::sqlite)?;
@@ -535,8 +553,8 @@ impl Store {
                     .execute(
                         "INSERT INTO items(library_id, rel, parent, name, title, container, size, mtime,
                              page_count, series_id, volume, rtl, comic_info, missing, updated_at,
-                             confidence, needs_review)
-                         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?15, ?16)",
+                             confidence, needs_review, media_kind)
+                         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?15, ?16, ?17)",
                         params![
                             item.library_id,
                             item.rel,
@@ -553,7 +571,8 @@ impl Store {
                             i32::from(item.comic_info),
                             now(),
                             item.confidence,
-                            i32::from(item.needs_review)
+                            i32::from(item.needs_review),
+                            item.media_kind
                         ],
                     )
                     .map_err(StoreError::sqlite)?;
@@ -663,7 +682,51 @@ impl Store {
         Ok(usize::try_from(n).unwrap_or(usize::MAX))
     }
 
-    /// Live items of one library in path order, capped. Used by the rename planner.
+    /// Totals per media kind: items, bytes and pages. This is what makes the
+    /// catalogue more than a comics index.
+    pub fn kind_totals(&self) -> StoreResult<Vec<(String, i64, i64, i64)>> {
+        let mut st = self
+            .conn
+            .prepare(
+                "SELECT media_kind, COUNT(*), COALESCE(SUM(size), 0),
+                        COALESCE(SUM(COALESCE(page_count, 0)), 0)
+                 FROM items WHERE missing = 0 GROUP BY media_kind ORDER BY COUNT(*) DESC",
+            )
+            .map_err(StoreError::sqlite)?;
+        let rows = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(StoreError::sqlite)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::sqlite)?;
+        Ok(rows)
+    }
+
+    /// Items of one kind, in path order, capped. Used by kind-aware tooling.
+    pub fn items_of_kind(&self, kind: &str, limit: usize) -> StoreResult<Vec<ItemRow>> {
+        let sql = format!(
+            "{} WHERE i.missing = 0 AND i.media_kind = ?1 ORDER BY i.rel LIMIT ?2",
+            Self::item_select()
+        );
+        let mut st = self.conn.prepare(&sql).map_err(StoreError::sqlite)?;
+        let rows = st
+            .query_map(
+                params![kind, i64::try_from(limit.max(1)).unwrap_or(i64::MAX)],
+                Self::map_item,
+            )
+            .map_err(StoreError::sqlite)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::sqlite)?;
+        Ok(rows)
+    }
+
+    /// Items of one library in path order, capped. Used by the rename planner.
     pub fn items_in_library(&self, library_id: i64, limit: usize) -> StoreResult<Vec<ItemRow>> {
         let sql = format!(
             "{} WHERE i.library_id = ?1 AND i.missing = 0 ORDER BY i.rel LIMIT ?2",
@@ -1333,6 +1396,7 @@ mod tests {
             comic_info: false,
             confidence: 0.5,
             needs_review: false,
+            media_kind: "comics".to_string(),
         }
     }
 

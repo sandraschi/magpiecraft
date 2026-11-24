@@ -4,13 +4,31 @@
 //! block and bump `SCHEMA_VERSION`. Every statement here is `IF NOT EXISTS`, so a
 //! fresh file and an existing file both end up valid.
 
-pub const SCHEMA_VERSION: &str = "2";
+pub const SCHEMA_VERSION: &str = "4";
 
 /// Additive step from schema 1 to 2: the review queue needs to know how confident
 /// the filename parse was, and whether a human should look at it.
 pub const MIGRATE_1_TO_2: &str = r#"
 ALTER TABLE items ADD COLUMN confidence REAL NOT NULL DEFAULT 0;
 ALTER TABLE items ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0;
+"#;
+
+/// Additive step from schema 2 to 3: an item carries its own media kind, because a
+/// video in a comics library is still a video.
+pub const MIGRATE_2_TO_3: &str = r#"
+ALTER TABLE items ADD COLUMN media_kind TEXT NOT NULL DEFAULT '';
+"#;
+
+/// Data step from schema 3 to 4: rows written before the kind column existed take
+/// their kind from the library they live in. That is exactly right for everything
+/// the old scanner indexed (comic archives, page folders, PDFs in book libraries);
+/// the next scan refines anything else.
+pub const MIGRATE_3_TO_4: &str = r#"
+UPDATE items
+   SET media_kind = COALESCE(
+       (SELECT kind FROM libraries WHERE libraries.id = items.library_id),
+       'other')
+ WHERE media_kind = '';
 "#;
 
 pub const SCHEMA_SQL: &str = r#"

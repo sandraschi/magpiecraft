@@ -37,6 +37,69 @@ impl ScanError {
 /// list; a test in `magpiecraft-core` asserts both lists agree.
 pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"];
 
+/// Video containers. A video file is an item in its own right, in any library.
+pub const VIDEO_EXTENSIONS: &[&str] = &[
+    "mkv", "mp4", "avi", "m4v", "mov", "wmv", "webm", "ts", "m2ts", "mpg", "mpeg", "ogv", "vob",
+];
+
+/// Audio containers.
+pub const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "wma", "aiff", "ape", "dsf",
+];
+
+/// Ebook containers.
+pub const EBOOK_EXTENSIONS: &[&str] = &["epub", "mobi", "azw3", "azw", "fb2", "djvu", "lit", "kfx"];
+
+/// Comic and manga archives. A plain ZIP is one too; whether it is an item depends
+/// on the library kind.
+pub const COMIC_ARCHIVE_EXTENSIONS: &[&str] = &["cbz", "zip", "cbr", "rar", "cb7", "7z"];
+
+/// Sidecar files that belong to a video but are not items themselves.
+pub const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "sub", "ass", "ssa", "vtt", "idx", "sup"];
+
+/// What a file looks like from its name alone. The library kind then decides what
+/// the file *is*: the same `.zip` is a comic in a comics library and not an item in
+/// a music library, and the same `.jpg` is a page in a comics library and a photo in
+/// a photo library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Family {
+    /// CBZ, ZIP, CBR, RAR, CB7, 7Z.
+    ComicArchive,
+    Pdf,
+    Image,
+    Video,
+    Audio,
+    Ebook,
+    /// A subtitle track: part of a video, never an item.
+    Subtitle,
+}
+
+/// Classify a file name. `None` means "not media this app indexes" (documents,
+/// metadata files, installers, and so on).
+pub fn family_of(name: &str) -> Option<Family> {
+    let ext = extension(name);
+    if ext.is_empty() {
+        return None;
+    }
+    if COMIC_ARCHIVE_EXTENSIONS.contains(&ext.as_str()) {
+        Some(Family::ComicArchive)
+    } else if ext == "pdf" {
+        Some(Family::Pdf)
+    } else if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        Some(Family::Image)
+    } else if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
+        Some(Family::Video)
+    } else if AUDIO_EXTENSIONS.contains(&ext.as_str()) {
+        Some(Family::Audio)
+    } else if EBOOK_EXTENSIONS.contains(&ext.as_str()) {
+        Some(Family::Ebook)
+    } else if SUBTITLE_EXTENSIONS.contains(&ext.as_str()) {
+        Some(Family::Subtitle)
+    } else {
+        None
+    }
+}
+
 /// Directory names that never contain the user's media.
 pub const SKIP_DIRS: &[&str] = &[
     "__macosx",
@@ -422,6 +485,27 @@ mod tests {
         let out = walk(&root, &WalkOptions::default()).unwrap();
         assert!(!out.dirs.iter().find(|d| d.rel == "Odd").unwrap().volume);
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn families_cover_every_media_kind() {
+        assert_eq!(family_of("a.cbz"), Some(Family::ComicArchive));
+        assert_eq!(family_of("a.CBR"), Some(Family::ComicArchive));
+        assert_eq!(family_of("a.cb7"), Some(Family::ComicArchive));
+        assert_eq!(family_of("a.pdf"), Some(Family::Pdf));
+        assert_eq!(family_of("scan.JPG"), Some(Family::Image));
+        assert_eq!(family_of("movie.mkv"), Some(Family::Video));
+        assert_eq!(family_of("movie.M2TS"), Some(Family::Video));
+        assert_eq!(family_of("track.flac"), Some(Family::Audio));
+        assert_eq!(family_of("book.epub"), Some(Family::Ebook));
+        assert_eq!(family_of("movie.srt"), Some(Family::Subtitle));
+        assert_eq!(family_of("cover.opf"), None);
+        assert_eq!(family_of("notes.txt"), None);
+        assert_eq!(family_of("noext"), None);
+        // Image folders still count images with the same list.
+        for ext in IMAGE_EXTENSIONS {
+            assert_eq!(family_of(&format!("p.{ext}")), Some(Family::Image), "{ext}");
+        }
     }
 
     #[test]
