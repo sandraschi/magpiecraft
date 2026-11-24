@@ -457,8 +457,10 @@ fn cbr_pages_are_listed_and_read_through_seven_zip() {
     let cbz = root.join("Saga/Saga 054.cbz");
     std::fs::copy(&cbz, root.join("Saga/Saga 058.cbr")).unwrap();
     let mut c = catalog(&home);
-    let mut forced = magpiecraft_core::Toolchain::default();
-    forced.seven_zip = Some(seven);
+    let forced = magpiecraft_core::Toolchain {
+        seven_zip: Some(seven),
+        ..Default::default()
+    };
     c.set_tools(forced);
     c.add_library("Comics", &root.display().to_string(), "comics", false, None)
         .unwrap();

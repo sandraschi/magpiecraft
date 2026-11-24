@@ -55,6 +55,16 @@ pub fn parse_volume_name(name: &str) -> ParsedName {
                 needs_review: confidence < REVIEW_THRESHOLD,
             };
         }
+        // The name starts with the marker, as in a volume folder "Vol 1 Moss and
+        // Rain". The volume is certain; the series is not in this name, so it is
+        // left empty for the caller to take from the parent folder.
+        return ParsedName {
+            series: String::new(),
+            volume: Some(volume),
+            year,
+            confidence: (confidence * 0.75).clamp(0.0, 1.0),
+            needs_review: false,
+        };
     }
 
     let series = clean_series(&tokens);
@@ -264,6 +274,19 @@ mod tests {
         let p = parse_volume_name("[Group] Bleach 012 [Digital] [cbr]");
         assert_eq!(p.series, "Bleach");
         assert_eq!(p.volume.as_deref(), Some("012"));
+    }
+
+    #[test]
+    fn folder_volume_names_parse() {
+        // A volume folder has no series in its own name: the volume is certain and
+        // the caller takes the series from the parent folder.
+        let p = parse_volume_name("Vol 1 Moss and Rain");
+        assert_eq!(p.volume.as_deref(), Some("1"), "{p:?}");
+        assert_eq!(p.series, "");
+        assert!(!p.needs_review);
+        assert!(p.confidence > 0.5);
+        let p = parse_volume_name("Vol 2 The Clearing");
+        assert_eq!(p.volume.as_deref(), Some("2"));
     }
 
     #[test]

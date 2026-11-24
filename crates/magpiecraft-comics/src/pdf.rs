@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn page_counts_are_parsed_leniently() {
         assert_eq!(parse_count(r#"{"pages": 226}"#).unwrap(), 226);
-        assert_eq!(parse_count(r#"{"page_count": "12"}"#).is_err(), true);
+        assert!(parse_count(r#"{"page_count": "12"}"#).is_err());
         assert_eq!(parse_count(r#"{"page_count": 12}"#).unwrap(), 12);
         assert!(parse_count("not json").is_err());
         assert!(parse_count(r#"{"nope": 1}"#).is_err());

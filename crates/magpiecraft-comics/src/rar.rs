@@ -80,7 +80,7 @@ pub fn list(archive: &Path, helpers: &Helpers) -> ComicResult<Vec<String>> {
             pages.push(path);
         }
     }
-    pages.sort_by(|a, b| magpiecraft_scan::natural_key(a).cmp(&magpiecraft_scan::natural_key(b)));
+    pages.sort_by_key(|p| magpiecraft_scan::natural_key(p));
     Ok(pages)
 }
 
