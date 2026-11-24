@@ -565,6 +565,100 @@ fn page_export_writes_the_raw_page_outside_the_library() {
 }
 
 #[test]
+fn every_readable_file_becomes_an_item_of_its_kind() {
+    use magpiecraft_core::catalog::classify_item;
+    // A film is a video in any library.
+    assert_eq!(
+        classify_item("movie.mkv", MediaKind::Comics),
+        Some((ContainerKind::File, MediaKind::Video))
+    );
+    assert_eq!(
+        classify_item("track.flac", MediaKind::Photo),
+        Some((ContainerKind::File, MediaKind::Audio))
+    );
+    assert_eq!(
+        classify_item("book.epub", MediaKind::Video),
+        Some((ContainerKind::File, MediaKind::Ebook))
+    );
+    // A photo is an item in a photo library, a page elsewhere.
+    assert_eq!(
+        classify_item("shot.jpg", MediaKind::Photo),
+        Some((ContainerKind::File, MediaKind::Photo))
+    );
+    assert_eq!(classify_item("page.jpg", MediaKind::Comics), None);
+    // A comic archive is an item in a comics library, not in a music one.
+    assert_eq!(
+        classify_item("vol.cbz", MediaKind::Comics),
+        Some((ContainerKind::Zip, MediaKind::Comics))
+    );
+    assert_eq!(classify_item("vol.cbz", MediaKind::Audio), None);
+    // A PDF takes its kind from the library.
+    assert_eq!(
+        classify_item("scan.pdf", MediaKind::Manga),
+        Some((ContainerKind::Pdf, MediaKind::Manga))
+    );
+    assert_eq!(
+        classify_item("paper.pdf", MediaKind::Ebook),
+        Some((ContainerKind::Pdf, MediaKind::Ebook))
+    );
+    // Subtitles and metadata files are never items.
+    assert_eq!(classify_item("movie.srt", MediaKind::Video), None);
+    assert_eq!(classify_item("metadata.opf", MediaKind::Ebook), None);
+}
+
+#[test]
+fn a_video_library_is_catalogued_as_video() {
+    let home = tmp("video-home");
+    let root = tmp("video-library");
+    std::fs::write(
+        root.join("Despicable Me Minion Madness 2010.mp4"),
+        b"not really a film",
+    )
+    .unwrap();
+    std::fs::write(root.join("Zootopia .2 2025.mkv"), b"nor this").unwrap();
+    std::fs::write(
+        root.join("movie.srt"),
+        b"1\n00:00:01,000 --> 00:00:02,000\nHi\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("poster.jpg"), b"not indexed in a video library").unwrap();
+    let mut c = catalog(&home);
+    c.add_library("Video", &root.display().to_string(), "video", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let items = c.browse(Some("lib:1|")).unwrap().items;
+    assert_eq!(items.len(), 2, "two films, no subtitle, no poster");
+    assert!(items.iter().all(|i| i.kind == MediaKind::Video));
+    assert!(!items[0].readable, "video is not read as pages here");
+    let pages = c.pages(&items[0].key).unwrap();
+    assert_eq!(pages.count, 0);
+    assert!(
+        pages.reason.as_deref().unwrap().contains("mpv"),
+        "the reason names a real player: {:?}",
+        pages.reason
+    );
+    let stats = c.stats().unwrap();
+    let video = stats
+        .per_kind
+        .iter()
+        .find(|k| k.kind == MediaKind::Video)
+        .expect("video totals");
+    assert_eq!(video.items, 2);
+    assert!(video.bytes > 0);
+    // The film preset renames by title and year, in place.
+    let planned = c.plan_rename(Some("Video"), "auto", 0).unwrap();
+    let diff = planned["plans"][0]["diff"].as_str().unwrap();
+    assert!(
+        diff.contains("Despicable Me Minion Madness (2010).mp4"),
+        "{diff}"
+    );
+    assert!(diff.contains("Zootopia 2 (2025).mkv"), "{diff}");
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn status_reports_the_engine_and_the_optional_tools() {
     let (home, root) = fixture("status");
     let mut c = catalog(&home);

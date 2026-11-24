@@ -277,6 +277,7 @@ fn a_subtitle_is_kept_after_the_volume() {
         year: None,
         edition: None,
         is_folder: false,
+        series_hint: None,
     };
     assert_eq!(
         target_for(&case, NamingPreset::Comics).as_deref(),
@@ -301,6 +302,7 @@ fn naming_rules_are_pure_and_predictable() {
         year: Some(2018),
         edition: None,
         is_folder: false,
+        series_hint: None,
     };
     assert_eq!(
         target_for(&input, NamingPreset::Comics).as_deref(),
