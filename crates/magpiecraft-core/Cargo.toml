@@ -1,0 +1,28 @@
+[package]
+name = "magpiecraft-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MagpieCraft core: model, catalogue engine, command bus, covers, reader wiring"
+
+[lints]
+workspace = true
+
+[dependencies]
+magpiecraft-store = { path = "../magpiecraft-store" }
+magpiecraft-scan = { path = "../magpiecraft-scan" }
+magpiecraft-comics = { path = "../magpiecraft-comics" }
+magpiecraft-health = { path = "../magpiecraft-health" }
+magpiecraft-tools = { path = "../magpiecraft-tools" }
+magpiecraft-meta = { path = "../magpiecraft-meta" }
+magpiecraft-sources = { path = "../magpiecraft-sources" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+image.workspace = true
+
+[dev-dependencies]
+zip.workspace = true
