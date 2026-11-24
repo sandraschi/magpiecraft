@@ -173,6 +173,35 @@ undo --confirm  -> move them back, update the keys again, journal marked undone
 - Applying a plan runs an incremental scan of that library afterwards, so folders and series match the
   new layout immediately.
 
+## The media kind is the first-class axis
+
+The catalogue is not a comics index with extras. Every item carries its own kind, and the library kind
+decides how a file is interpreted:
+
+```text
+scan::family_of(name)        what the file looks like (archive, pdf, image, video, audio, ebook)
+        +
+library.kind                 what the library is for
+        =
+core::classify_item()        (container, media kind) or nothing
+```
+
+Rules, all tested:
+
+| File | In a comics library | In a video library | In a photo library | In an ebook library |
+|---|---|---|---|---|
+| `.mkv` | video | video | video | video |
+| `.jpg` | a page, not an item | not an item | a photo | not an item |
+| `.cbz` | a volume | not an item | not an item | not an item |
+| `.pdf` | a comic | not an item | not an item | a book |
+| `.epub` | a book | a book | a book | a book |
+| `.srt`, `.opf` | never an item | never an item | never an item | never an item |
+
+Page folders (a folder of images as one volume) exist only in comics, manga and magazine libraries.
+Naming presets follow the kind: comics and manga by series and volume, films by title and year, TV
+episodes by series folder and SxxExx. Books, music and photos are left alone with a reason, because
+their owning app or their tags know better than a file name does.
+
 ## Why no ports
 
 The desktop app calls the engine in process. The MCP server speaks stdio. There is no localhost HTTP

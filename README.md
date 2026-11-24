@@ -25,23 +25,38 @@ command bus in process.
 |---|
 | ![Organise](docs/screenshots/organise.png) |
 
+| A video library: same catalogue, different kind |
+|---|
+| ![Video library](docs/screenshots/library-video.png) |
+
 Screenshots come from the synthetic demo library (`scripts/make-demo-library.ps1`), never from a real
 collection, so no copyrighted page is published. How to reproduce them: `docs/DEVELOPMENT.md`.
 
 ## What it does today
 
-- Scans libraries of CBZ/ZIP archives and numbered page folders, incrementally by path, size and mtime.
-  A second scan of 100,000 files takes under a second and opens nothing it already knows.
+- Indexes **every media kind you own**, not just comics: films and series, music, books, comics,
+  manga, magazines and photos. The library kind decides how a file is read (a `.jpg` is a page in a
+  comics library and a photo in a photo library); the file itself decides what it is (a `.mkv` in a
+  comics library is still a video).
+- Scans incrementally by path, size and mtime. A second scan of 100,000 files takes under a second and
+  opens nothing it already knows.
 - Reads ComicInfo.xml, groups volumes into series, and defaults reading direction per library, series
   or item.
-- Reads in a native reader: fit page or fit width, two-page spreads with the cover alone, half-page
-  mode with a 12 percent overlap, right to left, printed-page offset, progress, prefetch, keyboard.
+- Reads comics in a native reader: fit page or fit width, two-page spreads with the cover alone,
+  half-page mode with a 12 percent overlap, right to left, printed-page offset, progress, prefetch,
+  keyboard.
 - Searches the whole collection with FTS5, falling back to substring matching when a word is inside
   another word.
 - Verifies integrity: BLAKE3 on demand, exact duplicates by size then hash, and checksum manifests that
   detect bitrot later.
-- Shows what the collection is: items, pages, bytes, series, and which drive each library lives on,
+- Shows what the collection is: items, pages, bytes, series, and totals per media kind and per drive,
   including drives that are currently unplugged.
+- **Proposes renames you can read before they happen**, kind-aware: films by title and year, episodes by
+  series and SxxExx, comics by series and volume. Books and music are left to Calibre, BookCraft and
+  your tagger, and say so. Every applied plan is journalled and reversible.
+
+Playback is not here, on purpose: films and music open in mpv, Jellyfin or the OS, and books in
+BookCraft or your reader.
 
 The behavioural oracle for the grid and the reader is the browser prototype Sandra uses
 (`heavymetal-site/magpie_proto.py`). `docs/READER_PARITY.md` lists every scenario and whether the Rust
@@ -56,6 +71,8 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Feature | Status | Notes |
 |---|---|---|
 | Library roots, multiple kinds, mature flag | Implemented | Mature libraries are hidden from the grid, from search and from the CLI until enabled |
+| Every media kind indexed: video, audio, ebook, comic, manga, magazine, photo | Implemented | Kind comes from the file's format and the library's kind; subtitles, `.opf` and other sidecars are not items |
+| Kind totals in statistics | Implemented | Items, bytes and pages per kind |
 | Incremental scan by path, size and mtime | Implemented | Unchanged archives are not reopened |
 | CBZ / ZIP page listing and page count | Implemented | Natural order, `__MACOSX` and dotfiles skipped |
 | Numbered image folders as volumes | Implemented | Leaf-most folder with at least N images (default 3, configurable) |
@@ -80,6 +97,8 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Feature | Status | Notes |
 |---|---|---|
 | Rename plan with diff | Implemented | Pure naming rules, golden tested; collisions are reported and refused, never overwritten |
+| Kind-aware presets: comics, manga, films, TV episodes | Implemented | `auto` picks by item kind; a rename never moves an item out of its folder |
+| Books and music naming | Planned | Left to Calibre, BookCraft and your tagger on purpose; the plan says so instead of guessing |
 | Apply on confirm | Implemented | `apply --confirm`; refuses without it |
 | Undo journal | Implemented | Every applied plan is journalled; `undo --confirm` restores paths and reading progress; a journal undoes once |
 | Quarantine instead of delete | Implemented | Moves into `quarantine/<timestamp>/<library>/`; undo returns the file |
@@ -188,7 +207,7 @@ Nothing is ever written into a library. Covers, caches and manifests live here.
 
 Measured 2026-11-24 on the Tier 2 commit:
 
-- `cargo test --workspace`: **139 passed**, 0 failed
+- `cargo test --workspace`: **146 passed**, 0 failed
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean
   (`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented` denied workspace-wide)
 - `cargo fmt --all --check`: clean

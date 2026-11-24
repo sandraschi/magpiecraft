@@ -25,7 +25,7 @@ cargo test --workspace
 cargo run -q -p magpiecraft-app -- --smoke
 ```
 
-Expected: 139 tests pass (2026-11-24), clippy clean with the deny gates, fmt clean.
+Expected: 146 tests pass (2026-11-24), clippy clean with the deny gates, fmt clean.
 
 Probe the MCP surface after any change to tools or the command bus:
 
@@ -59,6 +59,17 @@ when it is not. It finds the window by title, captures with `PrintWindow` (which
 window), and falls back to a screen copy if the frame comes back dark.
 
 The demo library is generated, never copyrighted, and `data/` is gitignored.
+
+## Adding a kind or a preset
+
+1. An extension family goes in `magpiecraft-scan::family_of` with its table.
+2. Its kind mapping goes in `core::classify_item`, with a test in `catalog_tests.rs` covering every
+   library kind it could appear in.
+3. A naming preset is a pure function from `NamingInput` to a file name, with a golden test in
+   `organise.rs`; it must return `None` when the name is already right and must never add a path
+   separator.
+4. If the kind needs a reader or a player, that belongs in another app; here it returns
+   `no_pages_reason` with the name of the app to use.
 
 ## Tests
 

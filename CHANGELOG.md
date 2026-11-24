@@ -2,6 +2,37 @@
 
 All notable changes to MagpieCraft. Newest first. Dates are the day the work landed.
 
+## 0.3.0 - 2026-11-24 (Tier 2: every kind, not just comics)
+
+The catalogue is a collection-wide index. Comics are one module of it.
+
+Added:
+
+- **Every readable file is an item, with its own media kind.** `scan::family_of` classifies the name,
+  `core::classify_item` combines it with the library kind: a `.mkv` is a video in any library, a `.jpg`
+  is a page in a comics library and a photo in a photo library, a `.cbz` is an item only in a
+  comics-like library, a book PDF is a book. Subtitles, `.opf` and other sidecars are never items.
+- Schema 4 with an additive migration: `items.media_kind`, backfilled from the library kind for rows
+  written before the column existed.
+- Statistics per kind, and the app's section headings and cards follow the kind ("VIDEOS (7)", a film
+  card says "video", a comic card shows its cover).
+- **Kind-aware naming presets**: comics and manga as before, films as `Title (Year).ext` (release tags
+  dropped, text after the year kept so a two-part film does not collapse), TV episodes as
+  `Series - SxxExx - Title.ext` using the series folder and the `s01e02` / `1x02` marker, specials in
+  season 0 included. Books, music and photos are left alone with a reason.
+- `plan-rename --preset auto` picks per item; an explicit preset still overrides.
+- Page counts are only probed for comic-like containers, so a book library does not pay for a PDF page
+  count it never uses.
+
+Measured on the reference collection: 44,493 items across 17 libraries, 5.0 TiB, 1,696,651 pages.
+Video library (17,399 items) scanned in 8 s, book library (14,320 items) in 11 s. On the video library
+the planner proposes 545 in-place renames and skips 16,785, mostly films whose name has no year.
+
+Fixed:
+
+- `magpiecraft-mcp libraries` printed "no libraries yet" because a list result is wrapped by `dispatch`;
+  the printer now looks inside `value`. Regression test added.
+
 ## 0.2.0 - 2026-11-24 (Tier 2, first slice)
 
 Reading every container in the collection, and organising it without losing anything.
@@ -28,7 +59,7 @@ Added:
 - **`media_curate`** MCP tool (plan, apply, undo, quarantine, review) with `confirm` required for
   anything that touches a file.
 - Schema 2 with an additive migration (confidence and review flag on items).
-- 139 tests, including golden rename plans, apply/undo round trips with progress migration, quarantine
+- 146 tests, including golden rename plans, apply/undo round trips with progress migration, quarantine
   round trips, and the CBR end-to-end path.
 
 Not in this version: identify from metadata dumps or APIs, NFO and artwork writing, tag writing, the

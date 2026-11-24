@@ -33,7 +33,7 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `series-rtl <library> <series> [--on\|--off]` | Set the reading direction of a series |
 | `inspect <path>` | ffprobe technical details for one media file |
 | `review [library] [--limit N]` | Items whose filename parse was uncertain, with the confidence |
-| `plan-rename [library] [--preset comics\|manga] [--limit N]` | Build a rename plan. Nothing changes on disk |
+| `plan-rename [library] [--preset auto\|comics\|manga\|video] [--limit N]` | Build a rename plan. `auto` picks the preset per item kind; nothing changes on disk |
 | `plan-quarantine <key>` | Build a plan that moves one item into quarantine (never deletes) |
 | `plans` | Saved plans with their diff |
 | `apply <plan-id> --confirm` | Apply a plan; refused without `--confirm` |
@@ -108,7 +108,7 @@ quarantine.
 | Operation | Arguments | Returns |
 |---|---|---|
 | `review` | `library`, `limit` | Items with an uncertain filename parse and their confidence |
-| `plan_rename` | `library`, `preset` (`comics`/`manga`), `limit` | Plan id, diff, skipped items. Nothing changes |
+| `plan_rename` | `library`, `preset` (`auto`/`comics`/`manga`/`video`), `limit` | Plan id, diff, skipped items. Nothing changes |
 | `plan_quarantine` | `key` | Plan id that moves the item into quarantine |
 | `plans` | - | Saved plans with their diff |
 | `apply` | `id`, `confirm=true` | Applied and failed counts, journal id |

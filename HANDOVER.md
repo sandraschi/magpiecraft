@@ -35,7 +35,7 @@ the original names, and a second undo refused.
 
 Measured:
 
-- `cargo test --workspace`: **139 passed**, 0 failed; clippy and fmt clean.
+- `cargo test --workspace`: **146 passed**, 0 failed; clippy and fmt clean.
 - Real CBR: page list ~210 ms, first page 628 ms (index read + extraction + read), next page ~190 ms.
 - Page counts for archives that need a tool: 2,105 items in 17 minutes, once.
 - MCP stdio probe: 5 tools, `media_curate` included.
@@ -68,7 +68,7 @@ cd magpiecraft
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace                      # expect 139 passed
+cargo test --workspace                      # expect 146 passed
 cargo run -q -p magpiecraft-app -- --smoke  # headless app wiring
 magpiecraft-mcp.exe status --json
 ```
