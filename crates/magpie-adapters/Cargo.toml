@@ -1,0 +1,15 @@
+[package]
+name = "magpie-adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Read-only adapters for self-hosted media servers (OPDS, Jellyfin). Builds standalone for reuse by HomeServeCraft."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

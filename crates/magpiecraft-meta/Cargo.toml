@@ -1,0 +1,14 @@
+[package]
+name = "magpiecraft-meta"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MagpieCraft metadata foundations: per-provider rate limits, user agent, provenance"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
