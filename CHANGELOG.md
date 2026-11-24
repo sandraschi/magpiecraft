@@ -2,6 +2,38 @@
 
 All notable changes to MagpieCraft. Newest first. Dates are the day the work landed.
 
+## 0.2.0 - 2026-11-24 (Tier 2, first slice)
+
+Reading every container in the collection, and organising it without losing anything.
+
+Added:
+
+- **CBR / RAR / CB7 / 7Z pages through 7-Zip.** Page lists come from the archive index without
+  extracting; a page extracts the archive once into the app cache behind a cross-process lock, and the
+  cache has a size cap with oldest-first eviction. A missing 7-Zip is `not_configured`, not an empty
+  list.
+- **PDF pages through PdfCraft.** Page count from `pdfcraft-cli info`, pages rendered at a configurable
+  dpi into the cache. No PDF library is linked.
+- **Page export**: `page <key> <n> --out path` writes one page byte for byte, and `media_read
+  page_export` does the same over MCP.
+- **Organise with plans, diffs and an undo journal.** `plan-rename` builds a deterministic plan from
+  pure naming rules (golden tested), `apply --confirm` moves the files, updates the catalogue and the
+  reading-progress keys, and rescans that library; `undo --confirm` puts everything back. Collisions,
+  duplicate targets and vanished sources are reported as skipped, never overwritten. `sanitise_segment`
+  stops a metadata field from escaping its folder.
+- **Quarantine instead of delete**: `plan-quarantine` moves an item into
+  `<home>/quarantine/<timestamp>/<library>/`, and undo brings it back.
+- **Review queue**: items whose filename parse was uncertain are stored with a confidence and listed by
+  `review`; they clear when the name or the ComicInfo is fixed.
+- **`media_curate`** MCP tool (plan, apply, undo, quarantine, review) with `confirm` required for
+  anything that touches a file.
+- Schema 2 with an additive migration (confidence and review flag on items).
+- 138 tests, including golden rename plans, apply/undo round trips with progress migration, quarantine
+  round trips, and the CBR end-to-end path.
+
+Not in this version: identify from metadata dumps or APIs, NFO and artwork writing, tag writing, the
+Jellyfin/OPDS clients, the OPDS server.
+
 ## 0.1.0 - 2026-11-24 (Tier 0 and Tier 1)
 
 First build. Scaffolding plus the inventory engine and the comics reader.

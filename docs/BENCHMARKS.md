@@ -72,13 +72,34 @@ effect on one subtree rather than work per item; the larger `Manga - Nihongo` to
 
 Cover thumbnails are generated lazily, only for cards on screen, at three per frame.
 
+## Page counts for CBR and PDF
+
+Filling page counts for archives that need a tool, on the reference collection: **2,105 items updated
+in 17 minutes** (an index read through 7-Zip for each CBR, a `pdfcraft-cli info` call for each PDF).
+That is a one-off per item: the count is stored, and the next incremental scan skips it.
+
+## Reading a page from a CBR
+
+Measured on a 2-page extraction of a real 60 MB CBR (`Tardi - #02 Le Der des Ders.cbr`):
+
+| Step | Time |
+|---|---|
+| Page list (7-Zip index read) | ~210 ms |
+| First page (list + full extraction + read) | **628 ms** |
+| Next page (cached extraction) | ~190 ms |
+
+The extraction happens once per archive and is cached, so a reading session pays it once. The cache is
+capped (8 GiB by default) and evicts the oldest extractions first.
+
 ## Known costs and where they will go
 
 | Cost | Today | Plan |
 |---|---|---|
-| PDF page count | one `pdfcraft-cli` process per new PDF | batch or cache by (path, size, mtime); Tier 2 |
+| PDF page count | one `pdfcraft-cli` process per new PDF | batch or cache by (path, size, mtime); Tier 3 |
+| CBR page count | one `7z l` index read per new CBR (about 150 ms) | acceptable; only on first sight of an archive |
+| CBR first page | full extraction once per archive, then cached | fine for reading; covers extract too, bounded by the cap |
 | Cover rendering | one archive open and JPEG encode per cover, on a worker | already lazy and capped; add a bounded pool if first paint lags |
-| Scanning | single thread | a bounded worker pool at Tier 2 if a 5,000-archive library is slow |
+| Scanning | single thread | a bounded worker pool at Tier 3 if a 5,000-archive library is slow |
 | Search | FTS5 prefix, `LIKE` fallback | unchanged; measure at 100,000 items first |
 
 ## How to re-measure

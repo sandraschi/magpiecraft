@@ -135,6 +135,44 @@ The egui layer converts slots into textures and rectangles: it decodes on a work
 width, then paints with a uv rectangle for half-page crops. Because the crop is a uv range, the 12
 percent overlap costs nothing extra in memory.
 
+## Containers that need an external tool
+
+| Container | Listing pages | Reading a page |
+|---|---|---|
+| CBZ / ZIP | `zip` crate, central directory | read the entry |
+| Image folder | directory listing | read the file |
+| CBR / RAR / CB7 / 7Z | `7z l -slt -ba`: an index read, no extraction | extract once into `cache/extract/<key>` behind a `.lock` file, then read the file |
+| PDF | `pdfcraft-cli info` page count | `pdfcraft-cli render --page N --dpi 200` into `cache/pdf/<key>`, then read the PNG |
+
+`magpiecraft-comics::Helpers` carries the two tool paths, the cache root, the dpi and the two size caps.
+`Catalog::helpers()` builds it from the detected toolchain and the settings, and hands it to every
+`PageSet`. A missing tool produces `not_configured` with the variable to set, never an empty page list,
+and `Catalog::container_readable` reports a CBR as unreadable when 7-Zip is absent.
+
+The cache key is path, size and mtime, so an edited archive gets a fresh extraction. `enforce_cap`
+deletes the least recently touched extraction directories until the cap fits; covers survive because
+they are separate JPEGs.
+
+## Organise: plans, journals, quarantine
+
+```text
+plan_rename   -> Plan { ops: [Move { from, to }], skipped }  saved to <home>/plans/<id>.json
+apply --confirm -> move files, update items/dirs/series + progress keys, journal, rescan the library
+undo --confirm  -> move them back, update the keys again, journal marked undone
+```
+
+- The naming rules are pure functions (`NamingInput` to a target relative path), so a golden test pins
+  the exact output.
+- A plan refuses to overwrite: an existing target, two items mapping to the same target, or a source
+  that vanished all become `skipped` entries shown in the diff.
+- `sanitise_segment` strips Windows-hostile characters, collapses `..` runs and bounds the length, so a
+  metadata field cannot escape its folder.
+- Reading progress is keyed by the item key, so `move_item_path` rewrites the progress key with the new
+  path. Without that, a rename would silently lose the reader's place; there is a round-trip test.
+- A delete is `plan_quarantine`, a move into `<home>/quarantine/<timestamp>/<library>/`.
+- Applying a plan runs an incremental scan of that library afterwards, so folders and series match the
+  new layout immediately.
+
 ## Why no ports
 
 The desktop app calls the engine in process. The MCP server speaks stdio. There is no localhost HTTP

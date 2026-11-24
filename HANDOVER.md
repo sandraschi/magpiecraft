@@ -19,37 +19,39 @@ waits for the other session to review this Tier 1 exit.
 
 ## Last concrete action
 
-Ran the gates (117 tests, clippy clean with the deny lints, fmt clean), indexed the real collection,
-measured the first and second scan, captured and reviewed the UI, fixed two layout bugs the screenshots
-exposed, and pushed.
+Tier 2 started on Sandra's instruction (`par ordre de mufti`), overriding the wait for session B's
+review. Two increments landed:
 
-Measured on 2026-11-24 with the release build:
+**Containers.** CBR/RAR/CB7/7Z pages now come from 7-Zip and PDF pages from PdfCraft, so the reader
+handles the whole collection. Page lists are an index read (no extraction); a page extracts once into
+the app cache behind a cross-process lock and a size cap. A missing tool is `not_configured` with the
+variable to set. `page <key> <n> --out path` exports one page byte for byte.
 
-- Full scan of the reference collection (13 libraries, 661 GiB): **12,761 items, 1,554,955 pages,
-  70.6 minutes**. Incremental rescan of the same tree: **156 s, 12,761 unchanged, nothing reopened**.
-- Synthetic 100,000-file scan: **478 ms**.
-- `cargo test --workspace`: **117 passed**, 0 failed.
-- MCP stdio probe: initialize, tools/list, tools/call answered; a notification is not answered.
-- `magpiecraft.exe --smoke` reports the library it opened.
+**Organise.** Plans with diffs, apply on confirm, an undo journal, quarantine instead of delete, and a
+review queue for uncertain filenames. Reading progress follows a rename because the progress key is
+rewritten with the path. Verified end to end from the CLI on a real folder tree: 5 operations planned,
+refused without confirm, applied, browsed with the new names and the old page counts, undone back to
+the original names, and a second undo refused.
 
-Two bugs found by looking at the app rather than trusting it:
+Measured:
 
-1. `App::ui` hands over an unbounded `Ui`, so `Panel::top/bottom` placed the status bar off-screen and
-   `available_size()` reported about 14,285 points. The page area and status bar now take explicit rects
-   from `ctx.content_rect()`, and the reader paints into a rect derived from the real window.
-2. Card titles with two lines pushed their subtitles out of line. The title now reserves two lines.
+- `cargo test --workspace`: **138 passed**, 0 failed; clippy and fmt clean.
+- Real CBR: page list ~210 ms, first page 628 ms (index read + extraction + read), next page ~190 ms.
+- Page counts for archives that need a tool: 2,105 items in 17 minutes, once.
+- MCP stdio probe: 5 tools, `media_curate` included.
 
-Both are fixed, with the reader geometry now independent of layout-cursor arithmetic. Screenshots in
-`docs/screenshots/` are from the synthetic demo library (`scripts/make-demo-library.ps1`), and
-`scripts/capture-window.ps1` reproduces them.
+Still open in A2: identify from metadata (local dumps first, then APIs with per-provider limits), NFO
+and artwork writing, tag writing, Jellyfin/OPDS clients, OPDS server.
 
 ## Next step
 
-1. Verify the Tier 1 exit independently (see "Verification" below). Do not fix what you find here: log
-   it, then hand it back, per the craft rule that nobody verifies their own work.
-2. If the review passes, start A2 in this order: CBR/RAR page reading (7-Zip subprocess) and PDF pages
-   (PdfCraft `render`, cached), then identify and tag for video/music/books/comics, then the rename plan
-   with diff and undo journal, then `magpie-adapters` Jellyfin and OPDS read-only.
+1. The remaining A2 work, in this order: identify from metadata (local dumps first: GCD, MangaBaka,
+   the user's own Heavy Metal catalogue; then Open Library and MusicBrainz with per-provider limiters
+   and provenance), NFO and artwork writing in Jellyfin/Kodi layout, then the Jellyfin and OPDS
+   read-only clients in `magpie-adapters`. The OPDS server is the last item and is opt-in.
+2. Then the Tier 2 exit review (fresh clone, tests, clippy, fmt, the organise round trip, README
+   matrix) by an agent that did not write it.
+3. Tier 3 onwards needs a new handover.
 
 ## Verification (for the reviewer)
 
@@ -59,12 +61,26 @@ cd magpiecraft
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace                      # expect 116 passed
+cargo test --workspace                      # expect 138 passed
 cargo run -q -p magpiecraft-app -- --smoke  # headless app wiring
 magpiecraft-mcp.exe status --json
 ```
 
-Then check the two behavioural claims against the prototype at `http://127.0.0.1:8766/`:
+Then the organise round trip, on a copy of any folder with a few archives:
+
+```powershell
+$env:MAGPIECRAFT_HOME = "<scratch>"
+magpiecraft-mcp.exe library-add Demo "<copy of a folder>" --kind comics
+magpiecraft-mcp.exe scan
+magpiecraft-mcp.exe review
+magpiecraft-mcp.exe plan-rename            # note the plan id, read the diff
+magpiecraft-mcp.exe apply <plan-id>        # must refuse without --confirm
+magpiecraft-mcp.exe apply <plan-id> --confirm
+magpiecraft-mcp.exe browse lib:1           # new names, same page counts
+magpiecraft-mcp.exe undo <journal-id> --confirm
+```
+
+And the two behavioural claims against the prototype at `http://127.0.0.1:8766/`:
 
 - `docs/READER_PARITY.md` lists every scenario with the test that locks it. Open a real volume in both
   and compare spreads, half page, RTL and the page offset.

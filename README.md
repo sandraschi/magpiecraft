@@ -55,11 +55,12 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Incremental scan by path, size and mtime | Implemented | Unchanged archives are not reopened |
 | CBZ / ZIP page listing and page count | Implemented | Natural order, `__MACOSX` and dotfiles skipped |
 | Numbered image folders as volumes | Implemented | Leaf-most folder with at least N images (default 3, configurable) |
-| CBR / RAR / CB7 / 7Z | Partial | Indexed with size and title; page reading is `not_implemented` until Tier 2 |
-| PDF | Partial | Page count via `pdfcraft-cli info`; page rendering in the reader is Tier 2 |
-| AVIF | Partial | Indexed; the decoder is deferred with the AVIF decision |
+| CBR / RAR / CB7 / 7Z | Implemented | Page list from the 7-Zip index (no extraction); pages extracted once into the app cache with a lock and a size cap |
+| PDF | Implemented | Page count from `pdfcraft-cli info`, pages rendered by PdfCraft at 200 dpi into the cache |
+| AVIF | Partial | Indexed; the decoder decision (native library cost) is still open |
 | ComicInfo.xml | Implemented | Series, number, year, page count, credits, right-to-left flag |
-| Series grouping from folders and file names | Partial | Parsing with confidence; the review queue UI is Tier 2 |
+| Series grouping from folders and file names | Implemented | Parsing with confidence; uncertain names go to the review queue |
+| Review queue | Implemented | `review`, and `media_curate review`; clears when the name or ComicInfo is fixed |
 | BLAKE3 on demand | Implemented | `hash`, or `media_health hash` |
 | Exact duplicates | Implemented | Size first, then hash |
 | Checksum manifests and verification | Implemented | Tab separated, written outside the library |
@@ -70,11 +71,23 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Statistics and reports | Partial | Sizes, pages, kinds, drives; decades, languages and gaps are Tier 3+ |
 | Physical items (shelf catalogue) | Planned | Tier 5 |
 
-### B to F (later tiers)
+### B. Identify, tag and organise
+
+| Feature | Status | Notes |
+|---|---|---|
+| Rename plan with diff | Implemented | Pure naming rules, golden tested; collisions are reported and refused, never overwritten |
+| Apply on confirm | Implemented | `apply --confirm`; refuses without it |
+| Undo journal | Implemented | Every applied plan is journalled; `undo --confirm` restores paths and reading progress; a journal undoes once |
+| Quarantine instead of delete | Implemented | Moves into `quarantine/<timestamp>/<library>/`; undo returns the file |
+| Reading progress follows a rename | Implemented | The progress key is rewritten with the item path |
+| Identify from metadata | Planned | Local dumps first (GCD, MangaBaka), then APIs with per-provider limits |
+| NFO and artwork in Jellyfin/Kodi layout | Planned | Tier 2 remainder |
+| Tag writing | Planned | Tier 2 remainder |
+
+### C to F (later tiers)
 
 | Pillar | Status |
 |---|---|
-| B. Identify, tag, NFO and artwork, rename with plan and undo | Planned (Tier 2) |
 | C. Near duplicates, backup planner, SMART | Planned (Tier 3) |
 | D. Convert, subtitle generation, CD ripping, print scanning | Planned (Tier 3 and 5) |
 | E. Knowledge graph and federated sources | Planned (Tier 4; the source registry exists) |
@@ -88,6 +101,7 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Continue-reading row | Implemented |
 | Whole-collection search box | Implemented |
 | Reader: single page, spread with cover alone, half page, RTL, page jump, offset | Implemented |
+| Reader: CBR/RAR and PDF pages (7-Zip and PdfCraft) | Implemented |
 | Reader: prefetch and decode off the UI thread | Implemented |
 | Ctrl + wheel zoom, dark and light high-contrast themes | Implemented |
 | CLI with `--json` | Implemented |
@@ -168,14 +182,15 @@ Nothing is ever written into a library. Covers, caches and manifests live here.
 
 ## Quality gates
 
-Measured 2026-11-24 on the Tier 1 commit:
+Measured 2026-11-24 on the Tier 2 commit:
 
-- `cargo test --workspace`: **117 passed**, 0 failed
+- `cargo test --workspace`: **138 passed**, 0 failed
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean
   (`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented` denied workspace-wide)
 - `cargo fmt --all --check`: clean
 - MCP stdio probe: `initialize` -> `tools/list` -> `tools/call` verified, stdout pure JSON-RPC
 - Synthetic scan: 100,000 files in 478 ms (see `docs/BENCHMARKS.md`)
+- Organise round trip: plan, apply, undo verified on a real folder tree, including reading progress
 
 There is no `todo!()` or `unimplemented!()` reachable from any entry point. Unbuilt paths return
 `not_implemented` with a reason.
