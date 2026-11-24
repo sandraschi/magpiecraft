@@ -1,0 +1,48 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/magpiecraft-core",
+    "crates/magpiecraft-store",
+    "crates/magpiecraft-scan",
+    "crates/magpiecraft-meta",
+    "crates/magpiecraft-health",
+    "crates/magpiecraft-tools",
+    "crates/magpiecraft-sources",
+    "crates/magpiecraft-comics",
+    "crates/magpie-adapters",
+    "crates/magpiecraft-mcp",
+    "crates/magpiecraft-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT OR Apache-2.0"
+authors = ["Sandra Schipal"]
+repository = "https://github.com/sandraschi/magpiecraft"
+description = "MagpieCraft: inventory, read and curate a media collection you already own"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+blake3 = "1.5"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "wgpu"] }
+egui = "0.37"
+clap = { version = "4.5", features = ["derive"] }
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+
+[profile.release]
+opt-level = 2
+lto = "thin"

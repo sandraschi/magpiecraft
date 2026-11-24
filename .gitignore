@@ -1,0 +1,37 @@
+# Build output
+/target
+**/target
+**/*.rs.bk
+dist/
+installer/out/
+
+# Binaries and archives
+*.exe
+*.zip
+*.7z
+*.pdb
+*.mcpb
+
+# Local data, caches, databases
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+covers/
+[0-9]*.png
+
+# Secrets and local overrides
+.env
+.env.*
+
+# Backups (the fleet writes timestamped .bak files during batch edits)
+*.bak
+*.bak.*
+
+# Editor and tool state
+.idea/
+.vscode/
+*.orig
+*.rej
