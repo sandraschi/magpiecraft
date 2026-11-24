@@ -367,12 +367,13 @@ impl Catalog {
             let new_item = {
                 let mut item = build_file_item(lib, file, container, page_count, comic.as_ref());
                 // When the file was not reopened, ComicInfo is not in hand, so keep
-                // what the first scan learned instead of downgrading it.
+                // what the first scan learned instead of downgrading it. A row that
+                // has ComicInfo is certain by definition.
                 if !needs_open {
                     if let Some(row) = existing.as_ref() {
                         if row.comic_info {
-                            item.confidence = row.confidence;
-                            item.needs_review = row.needs_review;
+                            item.confidence = 1.0;
+                            item.needs_review = false;
                             item.volume = row.volume.clone().or(item.volume);
                         }
                     }

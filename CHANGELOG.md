@@ -28,7 +28,7 @@ Added:
 - **`media_curate`** MCP tool (plan, apply, undo, quarantine, review) with `confirm` required for
   anything that touches a file.
 - Schema 2 with an additive migration (confidence and review flag on items).
-- 138 tests, including golden rename plans, apply/undo round trips with progress migration, quarantine
+- 139 tests, including golden rename plans, apply/undo round trips with progress migration, quarantine
   round trips, and the CBR end-to-end path.
 
 Not in this version: identify from metadata dumps or APIs, NFO and artwork writing, tag writing, the

@@ -16,10 +16,21 @@ pub struct ParsedName {
     pub series: String,
     /// Volume or issue marker, as written ("05", "12", "54").
     pub volume: Option<String>,
+    /// Text after the marker, kept so a rename does not throw away a subtitle.
+    pub subtitle: Option<String>,
     pub year: Option<i32>,
     /// 0.0 to 1.0. Below `REVIEW_THRESHOLD` the name needs a human.
     pub confidence: f32,
     pub needs_review: bool,
+}
+
+/// Where a marker sits and what follows it.
+struct Marker {
+    index: usize,
+    volume: String,
+    confidence: f32,
+    /// First token after the marker, where a subtitle starts.
+    tail: usize,
 }
 
 /// Parses below this confidence appear in the review queue.
@@ -37,19 +48,26 @@ pub fn parse_volume_name(name: &str) -> ParsedName {
     work = strip_bracket_groups(&work);
     let tokens = tokenise(&work);
 
-    if let Some((idx, volume, confidence)) = find_marker(&tokens) {
-        let series = clean_series(&tokens[..idx]);
+    if let Some(marker) = find_marker(&tokens) {
+        let series = clean_series(&tokens[..marker.index]);
+        let subtitle = clean_series(&tokens[marker.tail.min(tokens.len())..]);
+        let subtitle = if subtitle.is_empty() {
+            None
+        } else {
+            Some(subtitle)
+        };
         if !series.is_empty() {
-            let confidence = if confidence >= REVIEW_THRESHOLD {
-                confidence
+            let confidence = if marker.confidence >= REVIEW_THRESHOLD {
+                marker.confidence
             } else if year.is_some() {
-                confidence + 0.05
+                marker.confidence + 0.05
             } else {
-                confidence
+                marker.confidence
             };
             return ParsedName {
                 series,
-                volume: Some(volume),
+                volume: Some(marker.volume),
+                subtitle,
                 year,
                 confidence,
                 needs_review: confidence < REVIEW_THRESHOLD,
@@ -60,9 +78,10 @@ pub fn parse_volume_name(name: &str) -> ParsedName {
         // left empty for the caller to take from the parent folder.
         return ParsedName {
             series: String::new(),
-            volume: Some(volume),
+            volume: Some(marker.volume),
+            subtitle,
             year,
-            confidence: (confidence * 0.75).clamp(0.0, 1.0),
+            confidence: (marker.confidence * 0.75).clamp(0.0, 1.0),
             needs_review: false,
         };
     }
@@ -76,6 +95,7 @@ pub fn parse_volume_name(name: &str) -> ParsedName {
             series
         },
         volume: None,
+        subtitle: None,
         year,
         confidence,
         needs_review: true,
@@ -149,13 +169,18 @@ fn tokenise(s: &str) -> Vec<String> {
 }
 
 /// Find the first volume marker. Returns (index, volume text, confidence).
-fn find_marker(tokens: &[String]) -> Option<(usize, String, f32)> {
+fn find_marker(tokens: &[String]) -> Option<Marker> {
     for (i, token) in tokens.iter().enumerate() {
         let lower = token.to_ascii_lowercase();
         if let Some(rest) = lower.strip_prefix('#') {
             let digits = leading_digits(rest);
             if !digits.is_empty() {
-                return Some((i, digits, 0.85));
+                return Some(Marker {
+                    index: i,
+                    volume: digits,
+                    confidence: 0.85,
+                    tail: i + 1,
+                });
             }
         }
         // vol12, vol.12, v05
@@ -165,7 +190,12 @@ fn find_marker(tokens: &[String]) -> Option<(usize, String, f32)> {
                 if let Some(rest) = lower.strip_prefix(&prefix) {
                     let digits = leading_digits(rest);
                     if !digits.is_empty() {
-                        return Some((i, digits, 0.9));
+                        return Some(Marker {
+                            index: i,
+                            volume: digits,
+                            confidence: 0.9,
+                            tail: i + 1,
+                        });
                     }
                     if rest.is_empty() || rest == "." {
                         // "Vol. 12": number is the next token.
@@ -175,7 +205,12 @@ fn find_marker(tokens: &[String]) -> Option<(usize, String, f32)> {
                                 && digits.len()
                                     == next.trim_matches(|c: char| !c.is_ascii_digit()).len()
                             {
-                                return Some((i, digits, 0.9));
+                                return Some(Marker {
+                                    index: i,
+                                    volume: digits,
+                                    confidence: 0.9,
+                                    tail: i + 2,
+                                });
                             }
                         }
                     }
@@ -183,13 +218,40 @@ fn find_marker(tokens: &[String]) -> Option<(usize, String, f32)> {
             }
         }
     }
+    // A number in the middle of the name: "Alef Thau - 01 - L'enfant Tronc".
+    // Up to three digits so a year never qualifies, and there must be text after it
+    // (a trailing number is handled below).
+    for (i, token) in tokens.iter().enumerate() {
+        if i == 0 || i + 1 >= tokens.len() {
+            continue;
+        }
+        let digits = leading_digits(token);
+        if digits.is_empty() || digits.len() > 3 || digits.len() != token.len() {
+            continue;
+        }
+        let value = digits.parse::<i32>().unwrap_or(0);
+        if value == 0 {
+            continue;
+        }
+        return Some(Marker {
+            index: i,
+            volume: digits,
+            confidence: 0.65,
+            tail: i + 1,
+        });
+    }
     // A bare number as the last token: "Batman 003". Reject years and long runs.
     if let Some(last) = tokens.last() {
         let digits = leading_digits(last);
         if !digits.is_empty() && digits.len() == last.len() && digits.len() <= 4 {
             let value = digits.parse::<i32>().unwrap_or(0);
             if !(1900..=2099).contains(&value) && tokens.len() >= 2 {
-                return Some((tokens.len() - 1, digits, 0.6));
+                return Some(Marker {
+                    index: tokens.len() - 1,
+                    volume: digits,
+                    confidence: 0.6,
+                    tail: tokens.len(),
+                });
             }
         }
     }

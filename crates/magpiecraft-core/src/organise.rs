@@ -155,6 +155,8 @@ pub struct NamingInput {
     pub title: String,
     pub series: Option<String>,
     pub volume: Option<String>,
+    /// Text after the volume marker, e.g. "L'enfant Tronc". Kept, not dropped.
+    pub subtitle: Option<String>,
     pub year: Option<i32>,
     /// Language or edition tag, for example `en` or `de`.
     pub edition: Option<String>,
@@ -264,6 +266,15 @@ pub fn target_for(input: &NamingInput, preset: NamingPreset) -> Option<String> {
             stem.push_str(&title);
         }
     }
+    if let Some(subtitle) = input
+        .subtitle
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        stem.push_str(" - ");
+        stem.push_str(&sanitise_segment(subtitle));
+    }
     if let Some(year) = input.year {
         if (1900..=2099).contains(&year) {
             stem.push_str(&format!(" ({year})"));
@@ -306,11 +317,14 @@ fn plan_id() -> String {
 }
 
 fn naming_input(row: &ItemRow) -> NamingInput {
+    // The subtitle lives in the file name, not in the catalogue, so parse it here.
+    let parsed = magpiecraft_comics::parse_volume_name(&row.name);
     NamingInput {
         rel: row.rel.clone(),
         title: row.title.clone(),
         series: row.series_title.clone(),
         volume: row.volume.clone(),
+        subtitle: parsed.subtitle,
         year: None,
         edition: None,
         is_folder: row.container == "image_folder",
@@ -757,6 +771,7 @@ mod tests {
             title: title.to_string(),
             series: series.map(str::to_string),
             volume: volume.map(str::to_string),
+            subtitle: None,
             year,
             edition: None,
             is_folder: rel.ends_with('/') || !rel.contains('.'),

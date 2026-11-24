@@ -35,10 +35,17 @@ the original names, and a second undo refused.
 
 Measured:
 
-- `cargo test --workspace`: **138 passed**, 0 failed; clippy and fmt clean.
+- `cargo test --workspace`: **139 passed**, 0 failed; clippy and fmt clean.
 - Real CBR: page list ~210 ms, first page 628 ms (index read + extraction + read), next page ~190 ms.
 - Page counts for archives that need a tool: 2,105 items in 17 minutes, once.
 - MCP stdio probe: 5 tools, `media_curate` included.
+- The Organise page renders the review queue, plan diffs and journals (screenshot in
+  `docs/screenshots/organise.png`), and `--page organise` starts the app there for screenshots.
+
+Two parser improvements came out of running the review queue against the real collection: a volume
+folder whose name starts with the marker ("Vol 1 Moss and Rain") now keeps its volume, and a number in
+the middle of a name ("Alef Thau - 01 - L'enfant Tronc") is a volume with the rest kept as a subtitle,
+so a rename no longer throws a subtitle away.
 
 Still open in A2: identify from metadata (local dumps first, then APIs with per-provider limits), NFO
 and artwork writing, tag writing, Jellyfin/OPDS clients, OPDS server.
@@ -61,7 +68,7 @@ cd magpiecraft
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace                      # expect 138 passed
+cargo test --workspace                      # expect 139 passed
 cargo run -q -p magpiecraft-app -- --smoke  # headless app wiring
 magpiecraft-mcp.exe status --json
 ```

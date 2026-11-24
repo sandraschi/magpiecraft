@@ -267,12 +267,37 @@ fn golden_plan_diff_for_a_known_library() {
 }
 
 #[test]
+fn a_subtitle_is_kept_after_the_volume() {
+    let mut case = NamingInput {
+        rel: "Alef Thau/Alef Thau - 01 - L'enfant Tronc.cbr".to_string(),
+        title: "Alef Thau - 01 - L'enfant Tronc".to_string(),
+        series: Some("Alef Thau".to_string()),
+        volume: Some("01".to_string()),
+        subtitle: Some("L'enfant Tronc".to_string()),
+        year: None,
+        edition: None,
+        is_folder: false,
+    };
+    assert_eq!(
+        target_for(&case, NamingPreset::Comics).as_deref(),
+        Some("Alef Thau/Alef Thau v01 - L'enfant Tronc.cbr")
+    );
+    case.subtitle = None;
+    assert_eq!(
+        target_for(&case, NamingPreset::Comics).as_deref(),
+        Some("Alef Thau/Alef Thau v01.cbr"),
+        "without a subtitle the canonical short form is used"
+    );
+}
+
+#[test]
 fn naming_rules_are_pure_and_predictable() {
     let input = NamingInput {
         rel: "Saga/Saga 054.cbz".to_string(),
         title: "Saga 054".to_string(),
         series: Some("Saga".to_string()),
         volume: Some("54".to_string()),
+        subtitle: None,
         year: Some(2018),
         edition: None,
         is_folder: false,

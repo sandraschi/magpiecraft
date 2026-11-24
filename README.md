@@ -188,7 +188,7 @@ Nothing is ever written into a library. Covers, caches and manifests live here.
 
 Measured 2026-11-24 on the Tier 2 commit:
 
-- `cargo test --workspace`: **138 passed**, 0 failed
+- `cargo test --workspace`: **139 passed**, 0 failed
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean
   (`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented` denied workspace-wide)
 - `cargo fmt --all --check`: clean
