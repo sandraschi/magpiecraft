@@ -17,7 +17,7 @@ use crate::images;
 use crate::model::*;
 use chrono::{SecondsFormat, Utc};
 use magpiecraft_comics::{
-    self, container_for_name, display_title, parse_volume_name, zip_comic_info, ComicInfo, PageSet,
+    self, display_title, parse_volume_name, zip_comic_info, ComicInfo, PageSet,
 };
 use magpiecraft_health::{self as health, DupGroup};
 use magpiecraft_scan::{self as scan, WalkOptions};
@@ -344,28 +344,37 @@ impl Catalog {
         let mut updated = 0usize;
         let mut unchanged = 0usize;
 
+        let library_kind = MediaKind::parse(&lib.kind).unwrap_or(MediaKind::Other);
+        let comicish = matches!(
+            library_kind,
+            MediaKind::Comics | MediaKind::Manga | MediaKind::Magazines
+        );
+
         for file in &walk.files {
-            let container = match container_for_name(&file.name) {
-                Some(c) => c,
+            let (container, item_kind) = match classify_item(&file.name, library_kind) {
+                Some(pair) => pair,
                 None => continue,
             };
             let existing = self.store.item_by_rel(lib.id, &file.rel)?;
-            let needs_open = full
-                || match &existing {
-                    None => true,
-                    Some(row) => {
-                        row.size != i64::try_from(file.size).unwrap_or(i64::MAX)
-                            || row.mtime != file.mtime
-                            || row.page_count.is_none()
-                    }
-                };
+            let page_container = !matches!(container, ContainerKind::File);
+            let needs_open = page_container
+                && (full
+                    || match &existing {
+                        None => true,
+                        Some(row) => {
+                            row.size != i64::try_from(file.size).unwrap_or(i64::MAX)
+                                || row.mtime != file.mtime
+                                || row.page_count.is_none()
+                        }
+                    });
             let (page_count, comic) = if needs_open {
-                self.probe_container(&container, &root.join(rel_to_path(&file.rel)))
+                self.probe_container(&container, item_kind, &root.join(rel_to_path(&file.rel)))
             } else {
                 (existing.as_ref().and_then(|r| r.page_count), None)
             };
             let new_item = {
-                let mut item = build_file_item(lib, file, container, page_count, comic.as_ref());
+                let mut item =
+                    build_file_item(lib, file, container, item_kind, page_count, comic.as_ref());
                 // When the file was not reopened, ComicInfo is not in hand, so keep
                 // what the first scan learned instead of downgrading it. A row that
                 // has ComicInfo is certain by definition.
@@ -389,7 +398,7 @@ impl Catalog {
             seen.insert(file.rel.clone());
         }
 
-        for dir in walk.dirs.iter().filter(|d| d.volume) {
+        for dir in walk.dirs.iter().filter(|d| d.volume && comicish) {
             let parsed = parse_volume_name(&dir.name);
             let series_title = series_title_for(&dir.parent, &dir.name, None, &parsed);
             let new_item = NewItem {
@@ -409,6 +418,7 @@ impl Catalog {
                 comic_info: false,
                 confidence: f64::from(parsed.confidence.clamp(0.0, 1.0)),
                 needs_review: parsed.needs_review,
+                media_kind: library_kind.as_str().to_string(),
             };
             let (_, state) = self.store.upsert_item(&new_item)?;
             match state {
@@ -445,19 +455,24 @@ impl Catalog {
     fn probe_container(
         &self,
         container: &ContainerKind,
+        kind: MediaKind,
         path: &Path,
     ) -> (Option<i64>, Option<ComicInfo>) {
         let helpers = self.helpers();
         let to_count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+        let comicish = matches!(
+            kind,
+            MediaKind::Comics | MediaKind::Manga | MediaKind::Magazines
+        );
         match container {
-            ContainerKind::Zip => {
+            ContainerKind::Zip if comicish => {
                 let pages = PageSet::open(path, ContainerKind::Zip, &helpers)
                     .ok()
                     .map(|s| to_count(s.len()));
                 let comic = zip_comic_info(path).ok().flatten();
                 (pages, comic)
             }
-            ContainerKind::Rar => {
+            ContainerKind::Rar if comicish => {
                 // An index read through 7-Zip, no extraction. Costs about 150 ms per
                 // archive, once, when the item is new.
                 let pages = magpiecraft_comics::rar::list(path, &helpers)
@@ -465,7 +480,8 @@ impl Catalog {
                     .map(|p| to_count(p.len()));
                 (pages, None)
             }
-            ContainerKind::Pdf => {
+            // A book PDF does not need a page count: the book reader is not here.
+            ContainerKind::Pdf if comicish => {
                 let pages = magpiecraft_comics::pdf::count(path, &helpers)
                     .ok()
                     .map(to_count);
@@ -636,6 +652,8 @@ impl Catalog {
 
     fn item_view(&self, lib: &LibraryRow, row: &ItemRow) -> ItemView {
         let container = ContainerKind::parse(&row.container).unwrap_or(ContainerKind::File);
+        let kind = MediaKind::parse(&row.media_kind)
+            .unwrap_or_else(|| MediaKind::parse(&lib.kind).unwrap_or(MediaKind::Other));
         ItemView {
             key: row.key(),
             library_id: row.library_id,
@@ -644,6 +662,7 @@ impl Catalog {
             parent: row.parent.clone(),
             name: row.name.clone(),
             title: row.title.clone(),
+            kind,
             container,
             readable: self.container_readable(container),
             size: row.size,
@@ -683,7 +702,14 @@ impl Catalog {
                     false,
                     usize::try_from(row.page_count.unwrap_or(0)).unwrap_or(0),
                     Vec::new(),
-                    Some(e.to_string()),
+                    Some(if matches!(container, ContainerKind::File) {
+                        no_pages_reason(MediaKind::parse(&row.media_kind).unwrap_or_else(|| {
+                            MediaKind::parse(&lib.kind).unwrap_or(MediaKind::Other)
+                        }))
+                        .to_string()
+                    } else {
+                        e.to_string()
+                    }),
                 ),
             };
         let back = ItemKey::new(lib.id, &row.parent).as_string();
@@ -979,6 +1005,17 @@ impl Catalog {
                     bytes: p.bytes,
                 })
                 .collect(),
+            per_kind: self
+                .store
+                .kind_totals()?
+                .into_iter()
+                .map(|(kind, items, bytes, pages)| KindStatsView {
+                    kind: MediaKind::parse(&kind).unwrap_or(MediaKind::Other),
+                    items,
+                    bytes,
+                    pages,
+                })
+                .collect(),
             drives,
             last_scan_ms: last.as_ref().map(|s| s.ms),
             last_scan_at: last.and_then(|s| s.finished_at),
@@ -1204,6 +1241,70 @@ impl Catalog {
 
 // ---------------------------------------------------------------- helpers
 
+/// Decide what one file is, given its name and the kind of library it lives in.
+///
+/// The kind is the first-class axis of the catalogue: a `.mkv` in a comics library
+/// is still a video, a `.zip` in a music library is not an item, and a `.jpg` is a
+/// page in a comics library and a photo in a photo library.
+pub fn classify_item(name: &str, library_kind: MediaKind) -> Option<(ContainerKind, MediaKind)> {
+    use magpiecraft_scan::Family;
+    let family = magpiecraft_scan::family_of(name)?;
+    let comicish = matches!(
+        library_kind,
+        MediaKind::Comics | MediaKind::Manga | MediaKind::Magazines
+    );
+    let ext = magpiecraft_scan::extension(name);
+    match family {
+        Family::ComicArchive => {
+            if !comicish && library_kind != MediaKind::Other {
+                return None;
+            }
+            let container = if ext == "zip" || ext == "cbz" {
+                ContainerKind::Zip
+            } else {
+                ContainerKind::Rar
+            };
+            Some((container, library_kind))
+        }
+        Family::Pdf => Some((
+            ContainerKind::Pdf,
+            if comicish {
+                library_kind
+            } else {
+                MediaKind::Ebook
+            },
+        )),
+        // Page folders are collected separately; in a photo library each image is
+        // its own item.
+        Family::Image => {
+            if library_kind == MediaKind::Photo {
+                Some((ContainerKind::File, MediaKind::Photo))
+            } else {
+                None
+            }
+        }
+        Family::Video => Some((ContainerKind::File, MediaKind::Video)),
+        Family::Audio => Some((ContainerKind::File, MediaKind::Audio)),
+        Family::Ebook => Some((ContainerKind::File, MediaKind::Ebook)),
+        Family::Subtitle => None,
+    }
+}
+
+/// Why an item has no page list, in words a user can act on.
+pub fn no_pages_reason(kind: MediaKind) -> &'static str {
+    match kind {
+        MediaKind::Video => {
+            "video is played in your own player (mpv, Jellyfin, the OS); MagpieCraft does not play media"
+        }
+        MediaKind::Audio => {
+            "audio is played in your own player (DJCraft, Jellyfin, the OS); MagpieCraft does not play media"
+        }
+        MediaKind::Ebook => "books are read in BookCraft or your own reader; this is a page reader for comics",
+        MediaKind::Photo => "a single photo has no page list",
+        _ => "this item has no page list",
+    }
+}
+
 fn library_view(row: LibraryRow) -> Library {
     Library {
         key: ItemKey::root(row.id).as_string(),
@@ -1267,9 +1368,37 @@ fn build_file_item(
     lib: &LibraryRow,
     file: &magpiecraft_scan::FileInfo,
     container: ContainerKind,
+    item_kind: MediaKind,
     page_count: Option<i64>,
     comic: Option<&ComicInfo>,
 ) -> NewItem {
+    let comicish = matches!(
+        item_kind,
+        MediaKind::Comics | MediaKind::Manga | MediaKind::Magazines
+    );
+    if !comicish {
+        // A film, a track or a book is not a series with a volume number, so the
+        // comic filename parser stays out of it: no guessing, no review noise.
+        return NewItem {
+            library_id: lib.id,
+            rel: file.rel.clone(),
+            parent: file.parent.clone(),
+            name: file.name.clone(),
+            title: display_title(&file.name, container),
+            container: container.as_str().to_string(),
+            size: i64::try_from(file.size).unwrap_or(i64::MAX),
+            mtime: file.mtime,
+            page_count,
+            series_rel: None,
+            series_title: None,
+            volume: None,
+            rtl: None,
+            comic_info: false,
+            confidence: 1.0,
+            needs_review: false,
+            media_kind: item_kind.as_str().to_string(),
+        };
+    }
     let parsed = parse_volume_name(&file.name);
     let series_title = series_title_for(&file.parent, &file.name, comic, &parsed);
     // ComicInfo is an explicit statement by the file, so it counts as certain.
@@ -1297,6 +1426,7 @@ fn build_file_item(
         comic_info: comic.is_some(),
         confidence,
         needs_review: comic.is_none() && parsed.needs_review,
+        media_kind: item_kind.as_str().to_string(),
     }
 }
 

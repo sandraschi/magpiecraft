@@ -168,6 +168,8 @@ pub struct ItemView {
     pub parent: String,
     pub name: String,
     pub title: String,
+    /// What the item is, from its own format or its library's kind.
+    pub kind: MediaKind,
     pub container: ContainerKind,
     pub readable: bool,
     pub size: i64,
@@ -299,6 +301,14 @@ pub struct DriveView {
     pub bytes: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KindStatsView {
+    pub kind: MediaKind,
+    pub items: i64,
+    pub bytes: i64,
+    pub pages: i64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StatsView {
     pub libraries: usize,
@@ -309,6 +319,8 @@ pub struct StatsView {
     pub pages: i64,
     pub bytes: i64,
     pub per_library: Vec<LibraryStatsView>,
+    /// Totals per media kind: the catalogue is not a comics index.
+    pub per_kind: Vec<KindStatsView>,
     pub drives: Vec<DriveView>,
     pub last_scan_ms: Option<usize>,
     pub last_scan_at: Option<String>,
