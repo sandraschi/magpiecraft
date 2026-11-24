@@ -106,6 +106,33 @@ pub enum Command {
         theme: Option<String>,
         zoom: Option<f32>,
     },
+    /// Items whose filename parse was uncertain.
+    Review {
+        library: Option<String>,
+        limit: usize,
+    },
+    /// Build (but do not apply) a rename plan.
+    PlanRename {
+        library: Option<String>,
+        preset: String,
+        limit: usize,
+    },
+    /// Build (but do not apply) a quarantine plan for one item.
+    PlanQuarantine {
+        key: String,
+    },
+    Plans,
+    /// Apply a saved plan. Requires confirm.
+    ApplyPlan {
+        id: String,
+        confirm: bool,
+    },
+    Journals,
+    /// Reverse an applied plan. Requires confirm.
+    Undo {
+        id: String,
+        confirm: bool,
+    },
 }
 
 impl Command {
@@ -139,6 +166,13 @@ impl Command {
             Command::Inspect { .. } => "inspect",
             Command::Settings => "settings",
             Command::SettingsSet { .. } => "settings.set",
+            Command::Review { .. } => "review",
+            Command::PlanRename { .. } => "plan.rename",
+            Command::PlanQuarantine { .. } => "plan.quarantine",
+            Command::Plans => "plans",
+            Command::ApplyPlan { .. } => "apply",
+            Command::Journals => "journals",
+            Command::Undo { .. } => "undo",
         }
     }
 }
@@ -241,6 +275,17 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
             }
             to_value(catalog.set_settings(settings)?)
         }
+        Command::Review { library, limit } => catalog.review(library.as_deref(), limit),
+        Command::PlanRename {
+            library,
+            preset,
+            limit,
+        } => catalog.plan_rename(library.as_deref(), &preset, limit),
+        Command::PlanQuarantine { key } => catalog.plan_quarantine(&key),
+        Command::Plans => catalog.plans(),
+        Command::ApplyPlan { id, confirm } => catalog.apply_plan(&id, confirm),
+        Command::Journals => catalog.journals(),
+        Command::Undo { id, confirm } => catalog.undo(&id, confirm),
     }
 }
 

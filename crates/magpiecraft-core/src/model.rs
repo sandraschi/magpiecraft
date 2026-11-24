@@ -180,6 +180,10 @@ pub struct ItemView {
     pub rtl: bool,
     /// Scan page minus printed page, remembered per item.
     pub page_offset: i32,
+    /// How confident the filename parse was, 0.0 to 1.0.
+    pub confidence: f64,
+    /// True when the parse was uncertain and the item is in the review queue.
+    pub needs_review: bool,
     pub comic_info: bool,
     pub progress: Option<ProgressView>,
 }

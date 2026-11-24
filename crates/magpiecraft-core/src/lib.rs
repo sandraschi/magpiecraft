@@ -11,6 +11,7 @@ pub mod cover;
 pub mod error;
 pub mod images;
 pub mod model;
+pub mod organise;
 
 pub use catalog::{Catalog, SearchMode};
 pub use command::{dispatch, Command};

@@ -116,6 +116,43 @@ impl Catalog {
         self.tools = tools;
     }
 
+    pub(crate) fn store(&self) -> &Store {
+        &self.store
+    }
+
+    pub(crate) fn store_mut(&mut self) -> &mut Store {
+        &mut self.store
+    }
+
+    /// One library by name or id, or every library when `library` is `None`.
+    pub fn target_libraries(&self, library: Option<&str>) -> MagpieResult<Vec<LibraryRow>> {
+        match library {
+            Some(key) => Ok(vec![self.library_row(key)?]),
+            None => Ok(self.store.libraries()?),
+        }
+    }
+
+    /// Live items of one library, in path order, capped.
+    pub fn store_items_in_library(
+        &self,
+        library_id: i64,
+        limit: usize,
+    ) -> MagpieResult<Vec<ItemRow>> {
+        Ok(self.store.items_in_library(library_id, limit)?)
+    }
+
+    /// Resolve an item key to its library row and item row.
+    pub fn resolve_item(&self, key: &str) -> MagpieResult<(LibraryRow, ItemRow)> {
+        let ik = ItemKey::parse(key)
+            .ok_or_else(|| MagpieError::invalid(format!("not an item key: {key}")))?;
+        let lib = self.library_row(&ik.library_id.to_string())?;
+        let row = self
+            .store
+            .item_by_rel(lib.id, &ik.rel)?
+            .ok_or_else(|| MagpieError::not_found(format!("no item at {key}")))?;
+        Ok((lib, row))
+    }
+
     /// Tool paths and cache root for containers that go through an external tool.
     pub fn helpers(&self) -> magpiecraft_comics::Helpers {
         let mut helpers = magpiecraft_comics::Helpers::new(
@@ -327,7 +364,21 @@ impl Catalog {
             } else {
                 (existing.as_ref().and_then(|r| r.page_count), None)
             };
-            let new_item = build_file_item(lib, file, container, page_count, comic.as_ref());
+            let new_item = {
+                let mut item = build_file_item(lib, file, container, page_count, comic.as_ref());
+                // When the file was not reopened, ComicInfo is not in hand, so keep
+                // what the first scan learned instead of downgrading it.
+                if !needs_open {
+                    if let Some(row) = existing.as_ref() {
+                        if row.comic_info {
+                            item.confidence = row.confidence;
+                            item.needs_review = row.needs_review;
+                            item.volume = row.volume.clone().or(item.volume);
+                        }
+                    }
+                }
+                item
+            };
             let (_, state) = self.store.upsert_item(&new_item)?;
             match state {
                 Upsert::Added => added += 1,
@@ -355,6 +406,8 @@ impl Catalog {
                 volume: parsed.volume.clone(),
                 rtl: None,
                 comic_info: false,
+                confidence: f64::from(parsed.confidence.clamp(0.0, 1.0)),
+                needs_review: parsed.needs_review,
             };
             let (_, state) = self.store.upsert_item(&new_item)?;
             match state {
@@ -600,6 +653,8 @@ impl Catalog {
             volume: row.volume.clone(),
             rtl: effective_rtl(lib, row),
             page_offset: row.page_offset,
+            confidence: row.confidence,
+            needs_review: row.needs_review,
             comic_info: row.comic_info,
             progress: self.progress_view(&row.key()),
         }
@@ -733,6 +788,45 @@ impl Catalog {
             "page_name": page_name,
             "out": target.display().to_string(),
             "bytes": bytes.len(),
+        }))
+    }
+
+    // --------------------------------------------------------------- review
+    /// The review queue: items whose filename parse was uncertain. Nothing here was
+    /// guessed silently; each one says what it thinks and how sure it is.
+    pub fn review(&self, library: Option<&str>, limit: usize) -> MagpieResult<Value> {
+        let library_id = match library {
+            Some(key) => Some(self.library_row(key)?.id),
+            None => None,
+        };
+        let limit = if limit == 0 { 200 } else { limit };
+        let rows = self.store.review_items(library_id, limit)?;
+        let libs = self.store.libraries()?;
+        let entries: Vec<Value> = rows
+            .iter()
+            .map(|row| {
+                let library = libs
+                    .iter()
+                    .find(|l| l.id == row.library_id)
+                    .map(|l| l.name.clone())
+                    .unwrap_or_default();
+                json!({
+                    "key": row.key(),
+                    "title": row.title,
+                    "rel": row.rel,
+                    "library": library,
+                    "series": row.series_title,
+                    "volume": row.volume,
+                    "confidence": row.confidence,
+                    "container": row.container,
+                })
+            })
+            .collect();
+        Ok(json!({
+            "count": entries.len(),
+            "total_in_queue": self.store.review_count().unwrap_or(0),
+            "entries": entries,
+            "note": "rename the file yourself, or add ComicInfo.xml; the next scan clears the entry",
         }))
     }
 
@@ -1177,6 +1271,12 @@ fn build_file_item(
 ) -> NewItem {
     let parsed = parse_volume_name(&file.name);
     let series_title = series_title_for(&file.parent, &file.name, comic, &parsed);
+    // ComicInfo is an explicit statement by the file, so it counts as certain.
+    let confidence = if comic.is_some() {
+        1.0
+    } else {
+        f64::from(parsed.confidence.clamp(0.0, 1.0))
+    };
     NewItem {
         library_id: lib.id,
         rel: file.rel.clone(),
@@ -1194,6 +1294,8 @@ fn build_file_item(
             .or_else(|| parsed.volume.clone()),
         rtl: comic.and_then(|c| c.rtl()),
         comic_info: comic.is_some(),
+        confidence,
+        needs_review: comic.is_none() && parsed.needs_review,
     }
 }
 
