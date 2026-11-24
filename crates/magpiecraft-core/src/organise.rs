@@ -162,15 +162,19 @@ pub struct NamingInput {
     pub edition: Option<String>,
     /// True when the item is a folder of pages (no extension to preserve).
     pub is_folder: bool,
+    /// The folder the item sits in, when it may name a series (TV episodes).
+    pub series_hint: Option<String>,
 }
 
-/// A preset decides the shape of the target path.
+/// A preset decides the shape of the target name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NamingPreset {
-    /// `Series/Series v05 (2007).cbz`
+    /// `Series v05 (2007).cbz`
     Comics,
-    /// `Series/Series v05 (2007) [de].cbz`
+    /// `Series v05 (2007) [de].cbz`
     Manga,
+    /// `Title (Year).mkv`
+    Video,
 }
 
 impl NamingPreset {
@@ -178,9 +182,83 @@ impl NamingPreset {
         match s {
             "comics" | "" => Some(NamingPreset::Comics),
             "manga" => Some(NamingPreset::Manga),
+            "video" | "movie" | "film" => Some(NamingPreset::Video),
             _ => None,
         }
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NamingPreset::Comics => "comics",
+            NamingPreset::Manga => "manga",
+            NamingPreset::Video => "video",
+        }
+    }
+}
+
+/// Release tags that are not part of a film's title.
+const QUALITY_TAGS: &[&str] = &[
+    "1080p", "720p", "2160p", "480p", "4k", "uhd", "hdr", "x264", "x265", "h264", "h265", "hevc",
+    "avc", "webrip", "web-dl", "webdl", "web", "bluray", "blu-ray", "brrip", "bdrip", "dvdrip",
+    "hdtv", "remux", "aac", "ac3", "dts", "ddp", "xvid", "divx", "multi", "proper", "repack",
+    "internal", "dubbed", "subbed", "sub", "german", "ger", "eng", "english", "dl",
+];
+
+/// Title, year and any remaining text of a film file, or `None` when there is no
+/// year to trust.
+///
+/// `Shaun.The.Sheep.The.Beast.Of.Mossy.Bottom.2026.mp4` becomes
+/// `("Shaun The Sheep The Beast Of Mossy Bottom", 2026, "")`, and
+/// `Shoah (1985) Part 2.mkv` becomes `("Shoah", 1985, "Part 2")` so a two-part film
+/// does not collapse onto itself. Release tags after the year are dropped, and a
+/// name without a year is not guessed at.
+pub fn video_title_and_year(stem: &str) -> Option<(String, i32, String)> {
+    let normalised = stem.replace(['.', '_'], " ");
+    let tokens: Vec<&str> = normalised.split_whitespace().collect();
+    let mut year: Option<i32> = None;
+    let mut cut = tokens.len();
+    for (i, token) in tokens.iter().enumerate().rev() {
+        let digits: String = token.chars().filter(char::is_ascii_digit).collect();
+        if digits.len() == 4 {
+            if let Ok(value) = digits.parse::<i32>() {
+                if (1900..=2099).contains(&value) {
+                    year = Some(value);
+                    cut = i;
+                    break;
+                }
+            }
+        }
+    }
+    let year = year?;
+    let mut words: Vec<&str> = tokens.get(..cut)?.to_vec();
+    while let Some(last) = words.last() {
+        let lower = last.to_ascii_lowercase();
+        let is_tag = QUALITY_TAGS.contains(&lower.as_str());
+        let is_bracket = lower.starts_with('[') || lower.starts_with('(');
+        if is_tag || is_bracket {
+            words.pop();
+        } else {
+            break;
+        }
+    }
+    let title = words
+        .join(" ")
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_string();
+    if title.is_empty() {
+        return None;
+    }
+    let tail: Vec<&str> = tokens
+        .iter()
+        .skip(cut + 1)
+        .filter(|t| !QUALITY_TAGS.contains(&t.to_ascii_lowercase().as_str()))
+        .copied()
+        .collect();
+    let tail = tail
+        .join(" ")
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_string();
+    Some((title, year, tail))
 }
 
 /// Replace characters Windows refuses, collapse whitespace, trim trailing dots and
@@ -220,6 +298,118 @@ pub fn sanitise_segment(input: &str) -> String {
     }
 }
 
+/// Season and episode from a file name: `S01E02`, `s1e2`, `1x02`.
+///
+/// Returns `(season, episode)` and the byte offset just past the marker, so the
+/// caller can keep the episode title that follows it.
+pub fn episode_of(stem: &str) -> Option<(u32, u32, usize)> {
+    let chars: Vec<char> = stem.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars.get(i).copied().unwrap_or(' ').to_ascii_lowercase();
+        // s01e02 and s1e2
+        if c == 's' {
+            let mut j = i + 1;
+            let start_season = j;
+            while j < chars.len() && chars.get(j).is_some_and(|c| c.is_ascii_digit()) {
+                j += 1;
+            }
+            if j > start_season && chars.get(j).is_some_and(|c| c.eq_ignore_ascii_case(&'e')) {
+                let start_episode = j + 1;
+                let mut k = start_episode;
+                while k < chars.len() && chars.get(k).is_some_and(|c| c.is_ascii_digit()) {
+                    k += 1;
+                }
+                if k > start_episode {
+                    let season = collect_u32(&chars[start_season..j]);
+                    let episode = collect_u32(&chars[start_episode..k]);
+                    // Season 0 is legitimate: specials live there.
+                    if episode > 0 {
+                        return Some((season, episode, k));
+                    }
+                }
+            }
+        }
+        // 1x02
+        if c.is_ascii_digit() {
+            let mut j = i;
+            while j < chars.len() && chars.get(j).is_some_and(|c| c.is_ascii_digit()) {
+                j += 1;
+            }
+            if chars.get(j).is_some_and(|c| c.eq_ignore_ascii_case(&'x')) {
+                let start_episode = j + 1;
+                let mut k = start_episode;
+                while k < chars.len() && chars.get(k).is_some_and(|c| c.is_ascii_digit()) {
+                    k += 1;
+                }
+                if k > start_episode {
+                    let season = collect_u32(&chars[i..j]);
+                    let episode = collect_u32(&chars[start_episode..k]);
+                    // Only when it is a whole token, so a film title like "2001x" is safe.
+                    let before_ok =
+                        i == 0 || !chars.get(i - 1).is_some_and(|c| c.is_alphanumeric());
+                    if episode > 0 && before_ok {
+                        return Some((season, episode, k));
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn collect_u32(chars: &[char]) -> u32 {
+    let text: String = chars.iter().collect();
+    text.parse::<u32>().unwrap_or(0)
+}
+
+/// Folder names that are structural, not a series name.
+fn is_structural_folder(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("season ")
+        || lower.starts_with("series ")
+        || lower == "specials"
+        || lower.starts_with("disc ")
+        || lower.starts_with("cd ")
+}
+
+/// A folder name as a series title: a trailing `(1984)` year is dropped, as are
+/// separators left behind by it.
+pub fn series_from_folder(folder: &str) -> String {
+    let trimmed = folder.trim();
+    let without_year = match trimmed.rfind('(') {
+        Some(pos)
+            if trimmed.ends_with(')')
+                && trimmed
+                    .get(pos + 1..trimmed.len().saturating_sub(1))
+                    .map(|y| y.len() == 4 && y.chars().all(|c| c.is_ascii_digit()))
+                    .unwrap_or(false) =>
+        {
+            trimmed.get(..pos).unwrap_or(trimmed)
+        }
+        _ => trimmed,
+    };
+    // "Dexter's Laboratory S02" is a season folder, not a series name.
+    let mut words: Vec<&str> = without_year
+        .trim_end_matches(['-', ' ', '.'])
+        .split_whitespace()
+        .collect();
+    while let Some(last) = words.last() {
+        let lower = last.to_ascii_lowercase();
+        let season_token = lower
+            .strip_prefix('s')
+            .map(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+            .unwrap_or(false);
+        if season_token || is_structural_folder(last) {
+            words.pop();
+        } else {
+            break;
+        }
+    }
+    sanitise_segment(&words.join(" "))
+}
+
 fn extension_of(rel: &str) -> Option<String> {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     match name.rsplit_once('.') {
@@ -252,6 +442,42 @@ pub fn volume_label(volume: &str) -> Option<String> {
 /// A rename must never move a book out of an author or publisher folder the user
 /// built, so the target has no directory part.
 pub fn target_for(input: &NamingInput, preset: NamingPreset) -> Option<String> {
+    if preset == NamingPreset::Video {
+        // A season and episode marker is a stronger signal than a year, so it is
+        // tried first: "Show S02E43 Title 2000" is an episode, not a film from 2000.
+        if let Some((season, episode, tail)) = episode_of(&input.title) {
+            let series = input
+                .series_hint
+                .as_deref()
+                .map(series_from_folder)
+                .filter(|s| !s.is_empty())?;
+            let rest: String = input.title.chars().skip(tail).collect();
+            let rest = rest.trim_matches(|c: char| !c.is_alphanumeric()).trim();
+            let mut stem = format!("{series} - S{season:02}E{episode:02}");
+            if !rest.is_empty() {
+                stem.push_str(" - ");
+                stem.push_str(&sanitise_segment(rest));
+            }
+            let file_name = match extension_of(&input.rel) {
+                Some(ext) => format!("{stem}.{ext}"),
+                None => stem,
+            };
+            return changed_or_none(input, &file_name);
+        }
+        if let Some((title, year, tail)) = video_title_and_year(&input.title) {
+            let mut stem = format!("{} ({year})", sanitise_segment(&title));
+            if !tail.is_empty() {
+                stem.push(' ');
+                stem.push_str(&sanitise_segment(&tail));
+            }
+            let file_name = match extension_of(&input.rel) {
+                Some(ext) => format!("{stem}.{ext}"),
+                None => stem,
+            };
+            return changed_or_none(input, &file_name);
+        }
+        return None;
+    }
     let series = input
         .series
         .clone()
@@ -297,11 +523,17 @@ pub fn target_for(input: &NamingInput, preset: NamingPreset) -> Option<String> {
             None => stem,
         }
     };
+
+    changed_or_none(input, &file_name)
+}
+
+/// `None` when the name is already right, so a plan does not list no-op renames.
+fn changed_or_none(input: &NamingInput, file_name: &str) -> Option<String> {
     let current = input.rel.rsplit('/').next().unwrap_or(&input.rel);
-    if normalise(current) == normalise(&file_name) {
+    if normalise(current) == normalise(file_name) {
         None
     } else {
-        Some(file_name)
+        Some(file_name.to_string())
     }
 }
 
@@ -323,6 +555,12 @@ fn plan_id() -> String {
 fn naming_input(row: &ItemRow) -> NamingInput {
     // The subtitle lives in the file name, not in the catalogue, so parse it here.
     let parsed = magpiecraft_comics::parse_volume_name(&row.name);
+    let kind =
+        crate::model::MediaKind::parse(&row.media_kind).unwrap_or(crate::model::MediaKind::Other);
+    let series_hint = match kind {
+        crate::model::MediaKind::Video => series_folder_hint(&row.parent),
+        _ => None,
+    };
     NamingInput {
         rel: row.rel.clone(),
         title: row.title.clone(),
@@ -332,7 +570,22 @@ fn naming_input(row: &ItemRow) -> NamingInput {
         year: None,
         edition: None,
         is_folder: row.container == "image_folder",
+        series_hint,
     }
+}
+
+/// The nearest folder above a video that looks like a show name, skipping
+/// "Season 1" style folders.
+fn series_folder_hint(parent: &str) -> Option<String> {
+    let mut parts: Vec<&str> = parent.split('/').filter(|p| !p.is_empty()).collect();
+    while let Some(last) = parts.last() {
+        if is_structural_folder(last) {
+            parts.pop();
+        } else {
+            break;
+        }
+    }
+    parts.last().map(|s| s.to_string())
 }
 
 impl Catalog {
@@ -371,10 +624,20 @@ impl Catalog {
         preset: &str,
         limit: usize,
     ) -> MagpieResult<Value> {
-        let preset = NamingPreset::parse(preset)
-            .ok_or_else(|| MagpieError::invalid(format!("unknown naming preset {preset}")))?;
+        // "auto" picks the preset per item from its media kind. An explicit preset
+        // overrides that for every item.
+        let forced =
+            if preset.trim().is_empty() || preset == "auto" {
+                None
+            } else {
+                Some(NamingPreset::parse(preset).ok_or_else(|| {
+                    MagpieError::invalid(format!("unknown naming preset {preset}"))
+                })?)
+            };
         let rows = self.target_libraries(library)?;
-        let limit = if limit == 0 { 5000 } else { limit };
+        // 0 means every item: a plan is a proposal, so being able to see the whole
+        // library at once is the point.
+        let limit = if limit == 0 { usize::MAX } else { limit };
         let mut plans: Vec<Plan> = Vec::new();
         for lib in rows {
             let items = self.store_items_in_library(lib.id, limit)?;
@@ -383,9 +646,31 @@ impl Catalog {
             let mut targets: HashSet<String> = HashSet::new();
             let mut bytes = 0u64;
             for row in &items {
+                let kind = crate::model::MediaKind::parse(&row.media_kind).unwrap_or_else(|| {
+                    crate::model::MediaKind::parse(&lib.kind)
+                        .unwrap_or(crate::model::MediaKind::Other)
+                });
+                let chosen = match forced {
+                    Some(p) => Some(p),
+                    None => match kind {
+                        crate::model::MediaKind::Comics
+                        | crate::model::MediaKind::Manga
+                        | crate::model::MediaKind::Magazines => Some(NamingPreset::Comics),
+                        crate::model::MediaKind::Video => Some(NamingPreset::Video),
+                        _ => None,
+                    },
+                };
+                let Some(chosen) = chosen else {
+                    skipped.push(format!(
+                        "{}: {} naming is not automatic (tags or the owning app decide it)",
+                        row.rel,
+                        kind.as_str()
+                    ));
+                    continue;
+                };
                 // A name we do not understand is left alone: it is in the review
                 // queue, not on the rename list.
-                if row.confidence < 0.5 && !row.comic_info {
+                if chosen != NamingPreset::Video && row.confidence < 0.5 && !row.comic_info {
                     skipped.push(format!(
                         "{}: uncertain name ({:.2}), see review",
                         row.rel, row.confidence
@@ -393,7 +678,12 @@ impl Catalog {
                     continue;
                 }
                 let input = naming_input(row);
-                let Some(file_name) = target_for(&input, preset) else {
+                if chosen == NamingPreset::Video && video_title_and_year(&input.title).is_none() {
+                    skipped.push(format!("{}: no year in the name", row.rel));
+                    continue;
+                }
+                let Some(file_name) = target_for(&input, chosen) else {
+                    // Already named correctly: not a skip worth reporting.
                     continue;
                 };
                 // Rename in place: never move an item out of its folder.
@@ -793,6 +1083,7 @@ mod tests {
             year,
             edition: None,
             is_folder: rel.ends_with('/') || !rel.contains('.'),
+            series_hint: None,
         }
     }
 
@@ -893,6 +1184,128 @@ mod tests {
         assert_eq!(volume_label("123").as_deref(), Some("v123"));
         assert_eq!(volume_label("3a").as_deref(), Some("v3a"));
         assert_eq!(volume_label("  "), None);
+    }
+
+    #[test]
+    fn video_names_become_title_and_year() {
+        assert_eq!(
+            video_title_and_year("Shaun.The.Sheep.The.Beast.Of.Mossy.Bottom.2026")
+                .map(|(t, y, _)| (t, y)),
+            Some((
+                "Shaun The Sheep The Beast Of Mossy Bottom".to_string(),
+                2026
+            ))
+        );
+        assert_eq!(
+            video_title_and_year("Zootopia .2 2025").map(|(t, y, _)| (t, y)),
+            Some(("Zootopia 2".to_string(), 2025))
+        );
+        assert_eq!(
+            video_title_and_year("Despicable Me Minion Madness 2010").map(|(t, y, _)| (t, y)),
+            Some(("Despicable Me Minion Madness".to_string(), 2010))
+        );
+        // A release tag after the year is not part of the title.
+        assert_eq!(
+            video_title_and_year("Alien 1979 1080p BluRay x265").map(|(t, y, _)| (t, y)),
+            Some(("Alien".to_string(), 1979))
+        );
+        // Text after the year is kept, so a two-part film does not collapse.
+        assert_eq!(
+            video_title_and_year("Shoah (1985) Part 2"),
+            Some(("Shoah".to_string(), 1985, "Part 2".to_string()))
+        );
+        // No year: not guessed at.
+        assert_eq!(video_title_and_year("Some Home Video"), None);
+        assert_eq!(video_title_and_year("2025"), None);
+    }
+
+    #[test]
+    fn a_film_is_renamed_in_place_from_its_year() {
+        let case = NamingInput {
+            rel: "Video/Shaun.The.Sheep.The.Beast.Of.Mossy.Bottom.2026.mp4".to_string(),
+            title: "Shaun.The.Sheep.The.Beast.Of.Mossy.Bottom.2026".to_string(),
+            series: None,
+            volume: None,
+            subtitle: None,
+            year: None,
+            edition: None,
+            is_folder: false,
+            series_hint: None,
+        };
+        assert_eq!(
+            target_for(&case, NamingPreset::Video).as_deref(),
+            Some("Shaun The Sheep The Beast Of Mossy Bottom (2026).mp4")
+        );
+        let already = NamingInput {
+            rel: "Video/Alien (1979).mkv".to_string(),
+            title: "Alien (1979)".to_string(),
+            ..case
+        };
+        assert_eq!(target_for(&already, NamingPreset::Video), None);
+    }
+
+    #[test]
+    fn an_episode_is_named_from_its_marker_and_folder() {
+        assert_eq!(
+            episode_of("Alfred J  Kwak s01e01 Alfred comes to life Part 1").map(|(s, e, _)| (s, e)),
+            Some((1, 1))
+        );
+        assert_eq!(
+            episode_of("Friends - 1x02 - The One with the Sonogram").map(|(s, e, _)| (s, e)),
+            Some((1, 2))
+        );
+        assert_eq!(
+            episode_of("Show S2E05").map(|(s, e, _)| (s, e)),
+            Some((2, 5))
+        );
+        let (_, _, tail) = episode_of("Show S2E05 - Pilot").unwrap();
+        assert_eq!(
+            "Show S2E05 - Pilot".chars().skip(tail).collect::<String>(),
+            " - Pilot"
+        );
+        assert_eq!(episode_of("A Film 2019"), None);
+        assert_eq!(episode_of("S01 without an episode"), None);
+
+        let case = NamingInput {
+            rel: "TV/Friends (1994)/Friends - 1x02 - The One with the Sonogram.mkv".to_string(),
+            title: "Friends - 1x02 - The One with the Sonogram".to_string(),
+            series: None,
+            volume: None,
+            subtitle: None,
+            year: None,
+            edition: None,
+            is_folder: false,
+            series_hint: Some("Friends (1994)".to_string()),
+        };
+        assert_eq!(
+            target_for(&case, NamingPreset::Video).as_deref(),
+            Some("Friends - S01E02 - The One with the Sonogram.mkv"),
+            "the year leaves the series name and the marker is normalised"
+        );
+
+        let no_title = NamingInput {
+            rel: "TV/Show/Season 1/Show s02e05.mkv".to_string(),
+            title: "Show s02e05".to_string(),
+            series_hint: Some("Show".to_string()),
+            ..case.clone()
+        };
+        assert_eq!(
+            target_for(&no_title, NamingPreset::Video).as_deref(),
+            Some("Show - S02E05.mkv")
+        );
+        // "Season 1" is structural, so the show comes from the folder above it.
+        assert_eq!(
+            series_folder_hint("TV/Show/Season 1"),
+            Some("Show".to_string())
+        );
+        assert_eq!(
+            series_folder_hint("Video/Murder, She Wrote (1984)"),
+            Some("Murder, She Wrote (1984)".to_string())
+        );
+        assert_eq!(
+            series_from_folder("Murder, She Wrote (1984)"),
+            "Murder, She Wrote"
+        );
     }
 
     #[test]
