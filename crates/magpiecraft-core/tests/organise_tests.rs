@@ -280,12 +280,12 @@ fn a_subtitle_is_kept_after_the_volume() {
     };
     assert_eq!(
         target_for(&case, NamingPreset::Comics).as_deref(),
-        Some("Alef Thau/Alef Thau v01 - L'enfant Tronc.cbr")
+        Some("Alef Thau v01 - L'enfant Tronc.cbr")
     );
     case.subtitle = None;
     assert_eq!(
         target_for(&case, NamingPreset::Comics).as_deref(),
-        Some("Alef Thau/Alef Thau v01.cbr"),
+        Some("Alef Thau v01.cbr"),
         "without a subtitle the canonical short form is used"
     );
 }
@@ -304,13 +304,13 @@ fn naming_rules_are_pure_and_predictable() {
     };
     assert_eq!(
         target_for(&input, NamingPreset::Comics).as_deref(),
-        Some("Saga/Saga v54 (2018).cbz")
+        Some("Saga v54 (2018).cbz")
     );
     let mut edition = input.clone();
     edition.edition = Some("de".to_string());
     assert_eq!(
         target_for(&edition, NamingPreset::Manga).as_deref(),
-        Some("Saga/Saga v54 (2018) [de].cbz")
+        Some("Saga v54 (2018) [de].cbz")
     );
     assert_eq!(sanitise_segment("a/b:c"), "a_b_c");
 }

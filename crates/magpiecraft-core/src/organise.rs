@@ -246,7 +246,11 @@ pub fn volume_label(volume: &str) -> Option<String> {
     Some(format!("v{}", sanitise_segment(trimmed)))
 }
 
-/// Target relative path for one item, or `None` when it is already named correctly.
+/// Target file name for one item, or `None` when it is already named correctly.
+///
+/// Only the name changes: an item is renamed inside the folder it already lives in.
+/// A rename must never move a book out of an author or publisher folder the user
+/// built, so the target has no directory part.
 pub fn target_for(input: &NamingInput, preset: NamingPreset) -> Option<String> {
     let series = input
         .series
@@ -293,11 +297,11 @@ pub fn target_for(input: &NamingInput, preset: NamingPreset) -> Option<String> {
             None => stem,
         }
     };
-    let target = format!("{series_segment}/{file_name}");
-    if normalise(&target) == normalise(&input.rel) {
+    let current = input.rel.rsplit('/').next().unwrap_or(&input.rel);
+    if normalise(current) == normalise(&file_name) {
         None
     } else {
-        Some(target)
+        Some(file_name)
     }
 }
 
@@ -379,9 +383,23 @@ impl Catalog {
             let mut targets: HashSet<String> = HashSet::new();
             let mut bytes = 0u64;
             for row in &items {
-                let input = naming_input(row);
-                let Some(target_rel) = target_for(&input, preset) else {
+                // A name we do not understand is left alone: it is in the review
+                // queue, not on the rename list.
+                if row.confidence < 0.5 && !row.comic_info {
+                    skipped.push(format!(
+                        "{}: uncertain name ({:.2}), see review",
+                        row.rel, row.confidence
+                    ));
                     continue;
+                }
+                let input = naming_input(row);
+                let Some(file_name) = target_for(&input, preset) else {
+                    continue;
+                };
+                // Rename in place: never move an item out of its folder.
+                let target_rel = match row.rel.rsplit_once('/') {
+                    Some((parent, _)) => format!("{parent}/{file_name}"),
+                    None => file_name.clone(),
                 };
                 let from = root_join(&lib.root, &row.rel);
                 let to = root_join(&lib.root, &target_rel);
@@ -790,7 +808,7 @@ mod tests {
                     Some("1"),
                     Some(1989),
                 ),
-                Some("Berserk/Berserk v01 (1989).cbz"),
+                Some("Berserk v01 (1989).cbz"),
             ),
             (
                 input(
@@ -800,7 +818,7 @@ mod tests {
                     Some("54"),
                     Some(2018),
                 ),
-                Some("Saga/Saga v54 (2018).cbz"),
+                Some("Saga v54 (2018).cbz"),
             ),
             (
                 input(
@@ -810,7 +828,7 @@ mod tests {
                     Some("5"),
                     Some(2007),
                 ),
-                Some("Yotsuba/Yotsuba v05 (2007)"),
+                Some("Yotsuba v05 (2007)"),
             ),
             (
                 input(
@@ -830,7 +848,7 @@ mod tests {
                     Some("3"),
                     None,
                 ),
-                Some("Loose Issue 003/Loose Issue 003 v03.cbz"),
+                Some("Loose Issue 003 v03.cbz"),
             ),
         ];
         for (case, expected) in cases {
@@ -854,7 +872,7 @@ mod tests {
         case.edition = Some("de".to_string());
         assert_eq!(
             target_for(&case, NamingPreset::Manga).as_deref(),
-            Some("Berserk/Berserk v01 (1989) [de].cbz")
+            Some("Berserk v01 (1989) [de].cbz")
         );
     }
 
@@ -882,11 +900,10 @@ mod tests {
         let case = input("x/a.cbz", "../../evil", Some("../../etc"), Some("1"), None);
         let target = target_for(&case, NamingPreset::Comics).unwrap();
         assert!(!target.contains(".."), "{target}");
-        assert!(target.starts_with("__"), "dots collapsed: {target}");
-        assert_eq!(
-            target.matches('/').count(),
-            1,
-            "one folder, one file: {target}"
+        assert!(
+            !target.contains('/') && !target.contains('\\'),
+            "no separators: {target}"
         );
+        assert!(target.starts_with("__"), "dots collapsed: {target}");
     }
 }
