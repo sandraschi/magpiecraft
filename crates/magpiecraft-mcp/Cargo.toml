@@ -1,0 +1,21 @@
+[package]
+name = "magpiecraft-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MagpieCraft CLI and MCP stdio server"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "magpiecraft-mcp"
+path = "src/main.rs"
+
+[dependencies]
+magpiecraft-core = { path = "../magpiecraft-core" }
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+chrono.workspace = true

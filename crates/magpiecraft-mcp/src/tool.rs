@@ -1,0 +1,342 @@
+//! MCP tool surface: four compound tools over the same command bus the CLI uses.
+//!
+//! Tool names use underscores, which some MCP hosts validate strictly. The dotted
+//! form (`media.catalog`) is accepted too, for symmetry with the command ids.
+//!
+//! Read tools are the default; the only mutations in Tier 1 are library add and
+//! remove (remove needs `confirm=true`) and reading progress.
+
+use magpiecraft_core::command::{dispatch, parse_search_mode, Command};
+use magpiecraft_core::Catalog;
+use serde_json::{json, Value};
+
+fn tool(name: &str, description: &str, props: Value, required: &[&str]) -> Value {
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": {
+            "type": "object",
+            "properties": props,
+            "required": required,
+            "additionalProperties": true,
+        },
+    })
+}
+
+fn ops(values: &[&str]) -> Value {
+    json!({ "type": "string", "enum": values, "description": "Operation to run." })
+}
+
+pub fn tools() -> Value {
+    let key =
+        json!({ "type": "string", "description": "Item key, for example lib:1|Manga/Yotsuba v01" });
+    let library = json!({ "type": "string", "description": "Library name or numeric id. Omit for all libraries." });
+    json!([
+        tool(
+            "media_catalog",
+            "Inventory of the user's own media. Operations: status (version, home, counts, external tools), \
+             libraries, browse (one folder, or all libraries when key is omitted), stats (counts, pages, bytes, \
+             drives), scan (incremental by path, size and mtime; full re-reads everything), series, continue \
+             (recently read), library_add, library_remove (requires confirm), settings, settings_set. \
+             Scanning is read-only on the collection. Nothing is ever downloaded.",
+            json!({
+                "operation": ops(&[
+                    "status", "libraries", "browse", "stats", "scan", "series", "continue",
+                    "library_add", "library_remove", "settings", "settings_set", "sources", "tools"
+                ]),
+                "key": { "type": "string", "description": "Folder key for browse, e.g. lib:1|Manga" },
+                "library": library,
+                "full": { "type": "boolean", "description": "scan: re-read unchanged files too" },
+                "name": { "type": "string", "description": "library_add or library_remove: library name" },
+                "root": { "type": "string", "description": "library_add: absolute folder that holds the library" },
+                "kind": { "type": "string", "description": "library_add: comics, manga, magazines, video, audio, ebook, photo, other" },
+                "mature": { "type": "boolean", "description": "library_add: flag the library as mature (hidden by default)" },
+                "rtl": { "type": ["boolean", "null"], "description": "library_add: force reading direction" },
+                "confirm": { "type": "boolean", "description": "library_remove: must be true, removes index rows only" },
+                "limit": { "type": "integer", "description": "continue: how many entries (default 12)" },
+                "mature_visible": { "type": "boolean", "description": "settings_set: show mature libraries" },
+                "imgdir_min_pages": { "type": "integer", "description": "settings_set: images needed for a page folder to be a volume" },
+                "theme": { "type": "string", "description": "settings_set: dark or light" },
+                "zoom": { "type": "number", "description": "settings_set: UI zoom 0.6 to 2.5" }
+            }),
+            &["operation"]
+        ),
+        tool(
+            "media_search",
+            "Search the whole catalogue. Operation search: every word must match; mode auto tries FTS5 prefix \
+             matching first and falls back to substring matching. Operation item: full record for one key, \
+             including page count, series, volume and reading progress.",
+            json!({
+                "operation": ops(&["search", "item"]),
+                "query": { "type": "string", "description": "search: words to find" },
+                "limit": { "type": "integer", "description": "search: result cap (default from settings, 300)" },
+                "mode": { "type": "string", "description": "search: auto, fts or substring" },
+                "key": key
+            }),
+            &["operation"]
+        ),
+        tool(
+            "media_read",
+            "Reading surface. Operation volume: page count, readable flag and the first page names for one item \
+             (CBR/RAR and PDF report not_implemented in this build). page_offset: remember the difference between \
+             printed page numbers and scan order. rtl: set reading direction for one item. progress_get and \
+             progress_set: reading position.",
+            json!({
+                "operation": ops(&["volume", "page_offset", "rtl", "progress_get", "progress_set"]),
+                "key": key,
+                "offset": { "type": "integer", "description": "page_offset: scan page minus printed page" },
+                "rtl": { "type": ["boolean", "null"], "description": "rtl: true, false, or null to clear" },
+                "page": { "type": "integer", "description": "progress_set: current page, 1 based" },
+                "total": { "type": "integer", "description": "progress_set: page count if unknown" },
+                "finished": { "type": "boolean", "description": "progress_set: mark as finished" }
+            }),
+            &["operation"]
+        ),
+        tool(
+            "media_health",
+            "Integrity. duplicates: exact duplicates by size then BLAKE3. hash: BLAKE3 of one item. manifest_write \
+             and manifest_verify: checksum manifests for bitrot detection. inspect: ffprobe technical details for \
+             one file. Files are only ever read.",
+            json!({
+                "operation": ops(&["duplicates", "hash", "manifest_write", "manifest_verify", "inspect"]),
+                "library": library,
+                "limit": { "type": "integer", "description": "duplicates: group cap (default 200)" },
+                "key": key,
+                "out": { "type": "string", "description": "manifest_write: manifest path (default under the data home)" },
+                "manifest": { "type": "string", "description": "manifest_verify: manifest path" },
+                "path": { "type": "string", "description": "inspect: absolute path of a media file" }
+            }),
+            &["operation"]
+        )
+    ])
+}
+
+fn req_str(args: &Value, name: &str) -> Result<String, String> {
+    args.get(name)
+        .and_then(Value::as_str)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("missing required string argument: {name}"))
+}
+
+fn opt_str(args: &Value, name: &str) -> Option<String> {
+    args.get(name)
+        .and_then(Value::as_str)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn opt_bool(args: &Value, name: &str) -> Option<bool> {
+    args.get(name).and_then(Value::as_bool)
+}
+
+fn opt_usize(args: &Value, name: &str) -> Option<usize> {
+    args.get(name)
+        .and_then(Value::as_u64)
+        .and_then(|n| usize::try_from(n).ok())
+}
+
+fn opt_i32(args: &Value, name: &str) -> Option<i32> {
+    args.get(name)
+        .and_then(Value::as_i64)
+        .and_then(|n| i32::try_from(n).ok())
+}
+
+/// Translate one tool call into a command. Unknown operations are an error the
+/// caller sees as `isError`, never a silent no-op.
+pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
+    let operation = req_str(args, "operation")?;
+    let op = operation.to_ascii_lowercase();
+    let normalised = name.replace('.', "_");
+    let cmd = match normalised.as_str() {
+        "media_catalog" => match op.as_str() {
+            "status" => Command::Status,
+            "tools" => Command::Tools,
+            "sources" => Command::Sources,
+            "libraries" => Command::Libraries,
+            "browse" => Command::Browse {
+                key: opt_str(args, "key"),
+            },
+            "stats" => Command::Stats,
+            "scan" => Command::Scan {
+                library: opt_str(args, "library"),
+                full: opt_bool(args, "full").unwrap_or(false),
+            },
+            "series" => Command::Series {
+                library: opt_str(args, "library"),
+            },
+            "continue" => Command::Continue {
+                limit: opt_usize(args, "limit").unwrap_or(12),
+            },
+            "library_add" | "library.add" => Command::LibraryAdd {
+                name: req_str(args, "name")?,
+                root: req_str(args, "root")?,
+                kind: opt_str(args, "kind").unwrap_or_else(|| "comics".to_string()),
+                mature: opt_bool(args, "mature").unwrap_or(false),
+                rtl_default: opt_bool(args, "rtl"),
+            },
+            "library_remove" | "library.remove" => Command::LibraryRemove {
+                name: req_str(args, "name")?,
+                confirm: opt_bool(args, "confirm").unwrap_or(false),
+            },
+            "settings" => Command::Settings,
+            "settings_set" | "settings.set" => Command::SettingsSet {
+                mature_visible: opt_bool(args, "mature_visible"),
+                imgdir_min_pages: opt_usize(args, "imgdir_min_pages"),
+                theme: opt_str(args, "theme"),
+                zoom: args.get("zoom").and_then(Value::as_f64).map(|z| z as f32),
+            },
+            other => return Err(format!("unknown media_catalog operation: {other}")),
+        },
+        "media_search" => match op.as_str() {
+            "search" => Command::Search {
+                query: req_str(args, "query")?,
+                limit: opt_usize(args, "limit").unwrap_or(0),
+                mode: parse_search_mode(
+                    &opt_str(args, "mode").unwrap_or_else(|| "auto".to_string()),
+                )
+                .map_err(|e| e.to_string())?,
+            },
+            "item" => Command::Item {
+                key: req_str(args, "key")?,
+            },
+            other => return Err(format!("unknown media_search operation: {other}")),
+        },
+        "media_read" => match op.as_str() {
+            "volume" | "pages" => Command::Pages {
+                key: req_str(args, "key")?,
+            },
+            "page_offset" | "offset" => Command::PageOffset {
+                key: req_str(args, "key")?,
+                offset: opt_i32(args, "offset")
+                    .ok_or_else(|| "missing required integer argument: offset".to_string())?,
+            },
+            "rtl" => Command::Rtl {
+                key: req_str(args, "key")?,
+                rtl: opt_bool(args, "rtl"),
+            },
+            "progress_get" | "progress.get" => Command::ProgressGet {
+                key: req_str(args, "key")?,
+            },
+            "progress_set" | "progress.set" => Command::ProgressSet {
+                key: req_str(args, "key")?,
+                page: opt_usize(args, "page")
+                    .ok_or_else(|| "missing required integer argument: page".to_string())?,
+                total: opt_usize(args, "total"),
+                finished: opt_bool(args, "finished").unwrap_or(false),
+            },
+            other => return Err(format!("unknown media_read operation: {other}")),
+        },
+        "media_health" => match op.as_str() {
+            "duplicates" | "dupes" => Command::Duplicates {
+                library: opt_str(args, "library"),
+                limit: opt_usize(args, "limit").unwrap_or(200),
+            },
+            "hash" => Command::Hash {
+                key: req_str(args, "key")?,
+            },
+            "manifest_write" | "manifest.write" => Command::ManifestWrite {
+                library: req_str(args, "library")?,
+                out: opt_str(args, "out"),
+            },
+            "manifest_verify" | "manifest.verify" => Command::ManifestVerify {
+                library: req_str(args, "library")?,
+                manifest: opt_str(args, "manifest"),
+            },
+            "inspect" => Command::Inspect {
+                path: req_str(args, "path")?,
+            },
+            other => return Err(format!("unknown media_health operation: {other}")),
+        },
+        other => return Err(format!("unknown tool: {other}")),
+    };
+    Ok(cmd)
+}
+
+/// Handle one `tools/call` params object.
+pub fn call_tool(catalog: &mut Catalog, params: &Value) -> Value {
+    let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    let empty = json!({});
+    let args = params.get("arguments").unwrap_or(&empty);
+    match to_command(name, args) {
+        Ok(cmd) => {
+            let result = dispatch(catalog, cmd);
+            let is_error = result.get("ok").and_then(Value::as_bool) == Some(false);
+            json!({
+                "content": [{ "type": "text", "text": result.to_string() }],
+                "isError": is_error,
+            })
+        }
+        Err(message) => json!({
+            "content": [{ "type": "text", "text": json!({
+                "ok": false,
+                "error": message,
+                "error_type": "invalid",
+            }).to_string() }],
+            "isError": true,
+        }),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use magpiecraft_core::Paths;
+
+    #[test]
+    fn schemas_are_well_formed_and_enumerate_operations() {
+        let list = tools();
+        let arr = list.as_array().unwrap();
+        assert_eq!(arr.len(), 4);
+        for t in arr {
+            let name = t["name"].as_str().unwrap();
+            assert!(name.starts_with("media_"), "{name}");
+            assert!(
+                name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "MCP names must be strict: {name}"
+            );
+            assert!(!t["description"].as_str().unwrap().is_empty());
+            assert!(t["inputSchema"]["properties"]["operation"]["enum"].is_array());
+        }
+    }
+
+    #[test]
+    fn operations_map_to_commands() {
+        let cmd = to_command(
+            "media_search",
+            &json!({"operation":"search","query":"saga"}),
+        )
+        .unwrap();
+        assert_eq!(cmd.id(), "search");
+        let dotted = to_command("media.catalog", &json!({"operation":"libraries"})).unwrap();
+        assert_eq!(dotted.id(), "libraries");
+        let offset = to_command(
+            "media_read",
+            &json!({"operation":"page_offset","key":"lib:1|a.cbz","offset":2}),
+        )
+        .unwrap();
+        assert_eq!(offset.id(), "page_offset");
+        assert!(to_command("media_read", &json!({"operation":"volume"})).is_err());
+        assert!(to_command("media_catalog", &json!({"operation":"download_everything"})).is_err());
+        assert!(to_command("media_catalog", &json!({})).is_err());
+    }
+
+    #[test]
+    fn a_failing_command_is_flagged_as_an_mcp_error() {
+        let home = std::env::temp_dir().join(format!("magpie-mcp-tool-{}", std::process::id()));
+        let mut catalog = Catalog::open_in_memory(Paths::at(home)).unwrap();
+        let bad = call_tool(
+            &mut catalog,
+            &json!({"name":"media_read","arguments":{"operation":"volume","key":"nonsense"}}),
+        );
+        assert_eq!(bad["isError"], json!(true));
+        let good = call_tool(
+            &mut catalog,
+            &json!({"name":"media_catalog","arguments":{"operation":"status"}}),
+        );
+        assert_eq!(good["isError"], json!(false));
+        let text = good["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("\"app\":\"magpiecraft\""), "{text}");
+    }
+}

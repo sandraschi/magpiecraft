@@ -1,0 +1,443 @@
+//! MagpieCraft L2: one binary that is both the CLI and the MCP stdio server.
+//!
+//! `magpiecraft-mcp <subcommand> [--json]` for humans and scripts.
+//! `magpiecraft-mcp mcp` for a client: line-delimited JSON-RPC 2.0 on stdin and
+//! stdout, MCP `2024-11-05`, logs on stderr only. A stray `println!` here would
+//! corrupt the handshake, so every diagnostic goes through `eprintln!`.
+//!
+//! Both surfaces build the same `Command` variants and call the same
+//! `dispatch`, so the CLI and MCP can never disagree.
+
+mod bench;
+mod human;
+mod mcp;
+mod tool;
+
+use clap::{Parser, Subcommand};
+use magpiecraft_core::command::{dispatch, parse_search_mode, Command};
+use magpiecraft_core::{Catalog, Paths};
+use serde_json::{json, Value};
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "magpiecraft-mcp",
+    version,
+    about = "MagpieCraft: inventory and read a comics, manga and media collection you already own",
+    long_about = "MagpieCraft indexes libraries you already own and reads them. It never downloads, \
+                  never circumvents DRM and never writes into a collection. MCP clients start it with \
+                  the `mcp` subcommand."
+)]
+struct Cli {
+    /// Print machine-readable JSON instead of a human summary.
+    #[arg(long, global = true)]
+    json: bool,
+
+    /// Override the data home (default: %LOCALAPPDATA%\magpiecraft).
+    #[arg(long, global = true)]
+    home: Option<String>,
+
+    #[command(subcommand)]
+    command: Cmd,
+}
+
+#[derive(Subcommand, Debug)]
+enum Cmd {
+    /// Version, home, counts and external tool status.
+    Status,
+    /// External tools: ffprobe, 7-Zip, PdfCraft.
+    Tools,
+    /// Federated source registry (pillar E).
+    Sources,
+    /// Configured libraries.
+    Libraries,
+    /// Add a library root.
+    LibraryAdd {
+        name: String,
+        root: String,
+        #[arg(long, default_value = "comics")]
+        kind: String,
+        #[arg(long)]
+        mature: bool,
+        /// Force right-to-left reading for this library.
+        #[arg(long)]
+        rtl: bool,
+        /// Force left-to-right reading for this library.
+        #[arg(long, conflicts_with = "rtl")]
+        ltr: bool,
+    },
+    /// Remove a library from the index. The files are never touched.
+    LibraryRemove {
+        name: String,
+        /// Required: confirms removing the index rows.
+        #[arg(long)]
+        confirm: bool,
+    },
+    /// Scan libraries incrementally by path, size and mtime.
+    Scan {
+        /// Library name or id. All libraries when omitted.
+        library: Option<String>,
+        /// Re-read every item, including unchanged files.
+        #[arg(long)]
+        full: bool,
+    },
+    /// Browse one folder. No key lists the libraries.
+    Browse {
+        /// Item key such as `lib:1|Manga/Yotsuba`.
+        key: Option<String>,
+    },
+    /// Whole-collection search.
+    Search {
+        /// Words to find. Every word must match.
+        query: Vec<String>,
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+        /// auto, fts or substring.
+        #[arg(long, default_value = "auto")]
+        mode: String,
+    },
+    /// One item by key.
+    Item { key: String },
+    /// Page list of one volume.
+    Pages { key: String },
+    /// Set the printed-page offset of one item.
+    Offset { key: String, value: i32 },
+    /// Force or clear the reading direction of one item.
+    Rtl {
+        key: String,
+        #[arg(long)]
+        on: bool,
+        #[arg(long, conflicts_with = "on")]
+        off: bool,
+    },
+    /// Reading progress for one item.
+    Progress {
+        key: String,
+        /// Record this page instead of reading progress.
+        #[arg(long)]
+        set: Option<usize>,
+        #[arg(long)]
+        of: Option<usize>,
+        #[arg(long)]
+        finished: bool,
+    },
+    /// Recently read items.
+    Continue {
+        #[arg(long, default_value_t = 12)]
+        limit: usize,
+    },
+    /// Counts, sizes, pages and drives.
+    Stats,
+    /// Exact duplicates by BLAKE3.
+    Dupes {
+        library: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
+    /// BLAKE3 of one item.
+    Hash { key: String },
+    /// Write a checksum manifest for a library.
+    ManifestWrite {
+        library: String,
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Verify a checksum manifest.
+    ManifestVerify {
+        library: String,
+        #[arg(long)]
+        manifest: Option<String>,
+    },
+    /// Series in a library.
+    Series { library: Option<String> },
+    /// Set the reading direction of a series.
+    SeriesRtl {
+        library: String,
+        series: String,
+        #[arg(long)]
+        on: bool,
+        #[arg(long, conflicts_with = "on")]
+        off: bool,
+    },
+    /// Technical inspection of one media file with ffprobe.
+    Inspect { path: String },
+    /// Current settings.
+    Settings,
+    /// Change settings.
+    SetSettings {
+        #[arg(long)]
+        mature: Option<bool>,
+        #[arg(long)]
+        imgdir_min_pages: Option<usize>,
+        #[arg(long)]
+        theme: Option<String>,
+        #[arg(long)]
+        zoom: Option<f32>,
+    },
+    /// Synthetic scan benchmark. Writes only under the data home.
+    BenchScan {
+        #[arg(long, default_value_t = 100_000)]
+        files: usize,
+        /// Reuse a tree at this path instead of creating one.
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// MCP stdio server (this is what a client starts).
+    Mcp,
+}
+
+fn print_value(json_mode: bool, command_id: &str, value: &Value) -> i32 {
+    if json_mode {
+        match serde_json::to_string_pretty(value) {
+            Ok(text) => println!("{text}"),
+            Err(e) => {
+                eprintln!("[magpiecraft] could not serialise output: {e}");
+                return 1;
+            }
+        }
+    } else {
+        human::print(command_id, value);
+    }
+    if value.get("ok").and_then(Value::as_bool) == Some(false) {
+        return 1;
+    }
+    0
+}
+
+fn main() -> std::process::ExitCode {
+    let cli = Cli::parse();
+    let paths = match cli.home.as_deref() {
+        Some(home) => Paths::at(home),
+        None => Paths::discover(),
+    };
+
+    if matches!(cli.command, Cmd::Mcp) {
+        return match mcp::serve(paths) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("[magpiecraft-mcp] fatal: {e}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
+
+    if let Cmd::BenchScan { files, dir } = &cli.command {
+        return match bench::run(paths, *files, dir.as_deref()) {
+            Ok(value) => {
+                let code = print_value(cli.json, "bench-scan", &value);
+                std::process::ExitCode::from(u8::try_from(code).unwrap_or(1))
+            }
+            Err(e) => {
+                eprintln!("[magpiecraft] bench-scan failed: {e}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
+
+    let mut catalog = match Catalog::open(paths) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[magpiecraft] cannot open the catalogue: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
+    let (id, command) = match build(&cli.command) {
+        Ok(pair) => pair,
+        Err(e) => {
+            eprintln!("[magpiecraft] {e}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+    let value = dispatch(&mut catalog, command);
+    let code = print_value(cli.json, id, &value);
+    std::process::ExitCode::from(u8::try_from(code).unwrap_or(1))
+}
+
+fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
+    let mode = |s: &str| parse_search_mode(s).map_err(|e| e.to_string());
+    let direction = |on: bool, off: bool| -> Option<bool> {
+        if on {
+            Some(true)
+        } else if off {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    let pair = match cmd {
+        Cmd::Status => (Command::Status.id(), Command::Status),
+        Cmd::Tools => (Command::Tools.id(), Command::Tools),
+        Cmd::Sources => (Command::Sources.id(), Command::Sources),
+        Cmd::Libraries => (Command::Libraries.id(), Command::Libraries),
+        Cmd::LibraryAdd {
+            name,
+            root,
+            kind,
+            mature,
+            rtl,
+            ltr,
+        } => {
+            let c = Command::LibraryAdd {
+                name: name.clone(),
+                root: root.clone(),
+                kind: kind.clone(),
+                mature: *mature,
+                rtl_default: direction(*rtl, *ltr),
+            };
+            (c.id(), c)
+        }
+        Cmd::LibraryRemove { name, confirm } => {
+            let c = Command::LibraryRemove {
+                name: name.clone(),
+                confirm: *confirm,
+            };
+            (c.id(), c)
+        }
+        Cmd::Scan { library, full } => {
+            let c = Command::Scan {
+                library: library.clone(),
+                full: *full,
+            };
+            (c.id(), c)
+        }
+        Cmd::Browse { key } => {
+            let c = Command::Browse { key: key.clone() };
+            (c.id(), c)
+        }
+        Cmd::Search {
+            query,
+            limit,
+            mode: m,
+        } => {
+            let c = Command::Search {
+                query: query.join(" "),
+                limit: *limit,
+                mode: mode(m)?,
+            };
+            (c.id(), c)
+        }
+        Cmd::Item { key } => {
+            let c = Command::Item { key: key.clone() };
+            (c.id(), c)
+        }
+        Cmd::Pages { key } => {
+            let c = Command::Pages { key: key.clone() };
+            (c.id(), c)
+        }
+        Cmd::Offset { key, value } => {
+            let c = Command::PageOffset {
+                key: key.clone(),
+                offset: *value,
+            };
+            (c.id(), c)
+        }
+        Cmd::Rtl { key, on, off } => {
+            let c = Command::Rtl {
+                key: key.clone(),
+                rtl: direction(*on, *off),
+            };
+            (c.id(), c)
+        }
+        Cmd::Progress {
+            key,
+            set,
+            of,
+            finished,
+        } => match set {
+            Some(page) => {
+                let c = Command::ProgressSet {
+                    key: key.clone(),
+                    page: *page,
+                    total: *of,
+                    finished: *finished,
+                };
+                (c.id(), c)
+            }
+            None => {
+                let c = Command::ProgressGet { key: key.clone() };
+                (c.id(), c)
+            }
+        },
+        Cmd::Continue { limit } => {
+            let c = Command::Continue { limit: *limit };
+            (c.id(), c)
+        }
+        Cmd::Stats => (Command::Stats.id(), Command::Stats),
+        Cmd::Dupes { library, limit } => {
+            let c = Command::Duplicates {
+                library: library.clone(),
+                limit: *limit,
+            };
+            (c.id(), c)
+        }
+        Cmd::Hash { key } => {
+            let c = Command::Hash { key: key.clone() };
+            (c.id(), c)
+        }
+        Cmd::ManifestWrite { library, out } => {
+            let c = Command::ManifestWrite {
+                library: library.clone(),
+                out: out.clone(),
+            };
+            (c.id(), c)
+        }
+        Cmd::ManifestVerify { library, manifest } => {
+            let c = Command::ManifestVerify {
+                library: library.clone(),
+                manifest: manifest.clone(),
+            };
+            (c.id(), c)
+        }
+        Cmd::Series { library } => {
+            let c = Command::Series {
+                library: library.clone(),
+            };
+            (c.id(), c)
+        }
+        Cmd::SeriesRtl {
+            library,
+            series,
+            on,
+            off,
+        } => {
+            let c = Command::SeriesRtl {
+                library: library.clone(),
+                series: series.clone(),
+                rtl: direction(*on, *off),
+            };
+            (c.id(), c)
+        }
+        Cmd::Inspect { path } => {
+            let c = Command::Inspect { path: path.clone() };
+            (c.id(), c)
+        }
+        Cmd::Settings => (Command::Settings.id(), Command::Settings),
+        Cmd::SetSettings {
+            mature,
+            imgdir_min_pages,
+            theme,
+            zoom,
+        } => {
+            let c = Command::SettingsSet {
+                mature_visible: *mature,
+                imgdir_min_pages: *imgdir_min_pages,
+                theme: theme.clone(),
+                zoom: *zoom,
+            };
+            (c.id(), c)
+        }
+        Cmd::BenchScan { .. } | Cmd::Mcp => {
+            return Err("internal: command handled before the catalogue was opened".to_string())
+        }
+    };
+    Ok(pair)
+}
+
+/// The JSON-RPC error envelope used by the MCP loop for unhandled methods.
+pub fn method_not_found(id: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": -32601, "message": "Method not found" },
+    })
+}
