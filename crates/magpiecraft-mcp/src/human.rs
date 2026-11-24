@@ -218,6 +218,108 @@ pub fn print(command: &str, value: &Value) {
             s(value, "out"),
             n(value, "bytes")
         ),
+        "review" => {
+            println!(
+                "{} item{} in the review queue ({} in total)",
+                n(value, "count"),
+                if n(value, "count") == 1 { "" } else { "s" },
+                n(value, "total_in_queue")
+            );
+            if let Some(entries) = value.get("entries").and_then(Value::as_array) {
+                for e in entries.iter().take(30) {
+                    println!(
+                        "  {:.2}  {:<44} {}",
+                        e.get("confidence").and_then(Value::as_f64).unwrap_or(0.0),
+                        s(e, "rel"),
+                        s(e, "key")
+                    );
+                }
+            }
+        }
+        "plan.rename" | "plan.quarantine" => {
+            println!(
+                "{} operation{} planned ({} skipped)",
+                n(value, "operations"),
+                if n(value, "operations") == 1 { "" } else { "s" },
+                value
+                    .get("plans")
+                    .and_then(Value::as_array)
+                    .map(|p| p.iter().map(|x| n(x, "skipped")).sum::<i64>())
+                    .unwrap_or(0)
+            );
+            if let Some(plans) = value.get("plans").and_then(Value::as_array) {
+                for plan in plans {
+                    println!("  plan {} ({})", s(plan, "id"), s(plan, "kind"));
+                    for line in s(plan, "diff").lines().take(20) {
+                        println!("    {line}");
+                    }
+                }
+            }
+            println!("  {}", s(value, "note"));
+        }
+        "plans" => {
+            println!("{} saved plan(s)", n(value, "count"));
+            if let Some(plans) = value.get("plans").and_then(Value::as_array) {
+                for plan in plans.iter().take(20) {
+                    println!(
+                        "  {:<24} {:<10} {:<20} {} ops",
+                        s(plan, "id"),
+                        s(plan, "kind"),
+                        s(plan, "library"),
+                        n(plan, "operations")
+                    );
+                }
+            }
+        }
+        "apply" => {
+            println!(
+                "applied {} operation(s), {} failed (journal {})",
+                n(value, "applied"),
+                n(value, "failed"),
+                s(value, "journal")
+            );
+            if let Some(errors) = value.get("errors").and_then(Value::as_array) {
+                for e in errors {
+                    if let Some(text) = e.as_str() {
+                        println!("  error: {text}");
+                    }
+                }
+            }
+            println!("  reverse with: {}", s(value, "undo"));
+        }
+        "journals" => {
+            println!("{} journal entry/entries", n(value, "count"));
+            if let Some(list) = value.get("journals").and_then(Value::as_array) {
+                for j in list.iter().take(20) {
+                    println!(
+                        "  {:<28} {:<10} {:<20} {} applied{}",
+                        s(j, "id"),
+                        s(j, "kind"),
+                        s(j, "library"),
+                        n(j, "applied"),
+                        if j.get("undone").and_then(Value::as_bool) == Some(true) {
+                            ", undone"
+                        } else {
+                            ""
+                        }
+                    );
+                }
+            }
+        }
+        "undo" => {
+            println!(
+                "restored {} operation(s) (journal {})",
+                n(value, "restored"),
+                s(value, "journal")
+            );
+            if let Some(problems) = value.get("problems").and_then(Value::as_array) {
+                for p in problems {
+                    if let Some(text) = p.as_str() {
+                        println!("  problem: {text}");
+                    }
+                }
+            }
+        }
         "stats" => {
             println!(
                 "{} libraries, {} items, {} pages, {}",

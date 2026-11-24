@@ -108,6 +108,24 @@ pub fn tools() -> Value {
                 "path": { "type": "string", "description": "inspect: absolute path of a media file" }
             }),
             &["operation"]
+        ),
+        tool(
+            "media_curate",
+            "Organise the collection without touching a file until you confirm. review lists items whose \
+             filename parse was uncertain. plan_rename builds a rename plan (nothing changes), plans lists \
+             saved plans, apply applies one with confirm=true, journals lists applied plans, undo reverses \
+             one with confirm=true. plan_quarantine moves an item into quarantine, never deletes it. Every \
+             applied change is journalled and reversible.",
+            json!({
+                "operation": ops(&["review", "plan_rename", "plan_quarantine", "plans", "apply", "journals", "undo"]),
+                "library": library,
+                "limit": { "type": "integer", "description": "review/plan_rename: how many entries (default 200 / 5000)" },
+                "preset": { "type": "string", "description": "plan_rename: comics or manga naming preset" },
+                "key": key,
+                "id": { "type": "string", "description": "apply/undo: plan or journal id" },
+                "confirm": { "type": "boolean", "description": "apply/undo: must be true; without it the plan is refused" }
+            }),
+            &["operation"]
         )
     ])
 }
@@ -255,6 +273,31 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
             },
             other => return Err(format!("unknown media_health operation: {other}")),
         },
+        "media_curate" => match op.as_str() {
+            "review" => Command::Review {
+                library: opt_str(args, "library"),
+                limit: opt_usize(args, "limit").unwrap_or(200),
+            },
+            "plan_rename" | "plan.rename" => Command::PlanRename {
+                library: opt_str(args, "library"),
+                preset: opt_str(args, "preset").unwrap_or_else(|| "comics".to_string()),
+                limit: opt_usize(args, "limit").unwrap_or(5000),
+            },
+            "plan_quarantine" | "plan.quarantine" => Command::PlanQuarantine {
+                key: req_str(args, "key")?,
+            },
+            "plans" => Command::Plans,
+            "apply" => Command::ApplyPlan {
+                id: req_str(args, "id")?,
+                confirm: opt_bool(args, "confirm").unwrap_or(false),
+            },
+            "journals" => Command::Journals,
+            "undo" => Command::Undo {
+                id: req_str(args, "id")?,
+                confirm: opt_bool(args, "confirm").unwrap_or(false),
+            },
+            other => return Err(format!("unknown media_curate operation: {other}")),
+        },
         other => return Err(format!("unknown tool: {other}")),
     };
     Ok(cmd)
@@ -295,7 +338,7 @@ mod tests {
     fn schemas_are_well_formed_and_enumerate_operations() {
         let list = tools();
         let arr = list.as_array().unwrap();
-        assert_eq!(arr.len(), 4);
+        assert_eq!(arr.len(), 5, "four read tools plus media_curate");
         for t in arr {
             let name = t["name"].as_str().unwrap();
             assert!(name.starts_with("media_"), "{name}");

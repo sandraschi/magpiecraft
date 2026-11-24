@@ -190,6 +190,39 @@ enum Cmd {
     },
     /// MCP stdio server (this is what a client starts).
     Mcp,
+    /// Items whose filename parse was uncertain.
+    Review {
+        library: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
+    /// Build a rename plan. Nothing changes until the plan is applied.
+    PlanRename {
+        library: Option<String>,
+        /// comics or manga.
+        #[arg(long, default_value = "comics")]
+        preset: String,
+        #[arg(long, default_value_t = 5000)]
+        limit: usize,
+    },
+    /// Build a quarantine plan for one item (a move, never a delete).
+    PlanQuarantine { key: String },
+    /// Saved plans.
+    Plans,
+    /// Apply a saved plan. Requires --confirm.
+    Apply {
+        id: String,
+        #[arg(long)]
+        confirm: bool,
+    },
+    /// Applied plans and their journals.
+    Journals,
+    /// Reverse an applied plan. Requires --confirm.
+    Undo {
+        id: String,
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 fn print_value(json_mode: bool, command_id: &str, value: &Value) -> i32 {
@@ -443,6 +476,45 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
         }
         Cmd::BenchScan { .. } | Cmd::Mcp => {
             return Err("internal: command handled before the catalogue was opened".to_string())
+        }
+        Cmd::Review { library, limit } => {
+            let c = Command::Review {
+                library: library.clone(),
+                limit: *limit,
+            };
+            (c.id(), c)
+        }
+        Cmd::PlanRename {
+            library,
+            preset,
+            limit,
+        } => {
+            let c = Command::PlanRename {
+                library: library.clone(),
+                preset: preset.clone(),
+                limit: *limit,
+            };
+            (c.id(), c)
+        }
+        Cmd::PlanQuarantine { key } => {
+            let c = Command::PlanQuarantine { key: key.clone() };
+            (c.id(), c)
+        }
+        Cmd::Plans => (Command::Plans.id(), Command::Plans),
+        Cmd::Apply { id, confirm } => {
+            let c = Command::ApplyPlan {
+                id: id.clone(),
+                confirm: *confirm,
+            };
+            (c.id(), c)
+        }
+        Cmd::Journals => (Command::Journals.id(), Command::Journals),
+        Cmd::Undo { id, confirm } => {
+            let c = Command::Undo {
+                id: id.clone(),
+                confirm: *confirm,
+            };
+            (c.id(), c)
         }
     };
     Ok(pair)
