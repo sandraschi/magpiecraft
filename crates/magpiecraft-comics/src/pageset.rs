@@ -1,9 +1,11 @@
 //! Page sources: an ordered list of pages plus a way to read one page's bytes.
 //!
 //! The list is built once when an item is opened; bytes are read on demand. Every
-//! open is read-only, so a broken archive can never damage the collection.
+//! open is read-only: archives are extracted to the app cache, never modified, and
+//! a broken archive can never damage the collection.
 
-use crate::{ComicError, ComicResult, ContainerKind};
+use crate::helpers::Helpers;
+use crate::{pdf, rar, ComicError, ComicResult, ContainerKind};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -19,24 +21,21 @@ pub struct PageSet {
     path: PathBuf,
     container: ContainerKind,
     pages: Vec<String>,
+    helpers: Helpers,
 }
 
 impl PageSet {
-    /// List the pages of an item. Fails with `not_implemented` for containers
-    /// this build cannot read yet (RAR, PDF) rather than returning an empty list.
-    pub fn open(path: &Path, container: ContainerKind) -> ComicResult<Self> {
+    /// List the pages of an item. Needs `helpers` for containers that go through an
+    /// external tool (7-Zip for RAR, PdfCraft for PDF); without the tool the error
+    /// is `not_configured`, not an empty list.
+    pub fn open(path: &Path, container: ContainerKind, helpers: &Helpers) -> ComicResult<Self> {
         let pages = match container {
             ContainerKind::Zip => zip_pages(path)?,
             ContainerKind::ImageFolder => folder_pages(path)?,
-            ContainerKind::Rar => {
-                return Err(ComicError::NotReadable(
-                    "CBR/RAR/CB7 has no reader in this build; 7-Zip extraction is Tier 2",
-                ))
-            }
+            ContainerKind::Rar => rar::list(path, helpers)?,
             ContainerKind::Pdf => {
-                return Err(ComicError::NotReadable(
-                    "PDF pages are rendered by PdfCraft (pdfcraft-cli render), Tier 2",
-                ))
+                let count = pdf::count(path, helpers)?;
+                (1..=count).map(|n| format!("{n:04}")).collect()
             }
             ContainerKind::File => {
                 return Err(ComicError::Invalid(
@@ -48,6 +47,7 @@ impl PageSet {
             path: path.to_path_buf(),
             container,
             pages,
+            helpers: helpers.clone(),
         })
     }
 
@@ -105,11 +105,14 @@ impl PageSet {
                 let full = self.path.join(&name);
                 std::fs::read(&full).map_err(|e| ComicError::io(&full, e))
             }
-            other => Err(ComicError::NotReadable(match other {
-                ContainerKind::Rar => "CBR/RAR has no reader in this build; Tier 2",
-                ContainerKind::Pdf => "PDF pages come from PdfCraft; Tier 2",
-                _ => "container is not readable",
-            })),
+            ContainerKind::Rar => rar::read(&self.path, &name, &self.helpers),
+            ContainerKind::Pdf => {
+                let rendered = pdf::render(&self.path, page, &self.helpers)?;
+                std::fs::read(&rendered).map_err(|e| ComicError::io(&rendered, e))
+            }
+            ContainerKind::File => Err(ComicError::Invalid(
+                "single files have no pages".to_string(),
+            )),
         }
     }
 }
@@ -146,6 +149,30 @@ pub fn zip_pages(path: &Path) -> ComicResult<Vec<String>> {
     Ok(names)
 }
 
+/// Page images directly in a folder, in natural order.
+pub fn folder_pages(path: &Path) -> ComicResult<Vec<String>> {
+    let mut names: Vec<String> = Vec::new();
+    let entries = std::fs::read_dir(path).map_err(|e| ComicError::io(path, e))?;
+    for entry in entries.flatten() {
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        if !file_type.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        if magpiecraft_scan::is_image_name(&name) {
+            names.push(name);
+        }
+    }
+    names.sort_by_key(|n| magpiecraft_scan::natural_key(n));
+    Ok(names)
+}
+
 /// Read `ComicInfo.xml` from a ZIP without listing its pages. Returns `None` when
 /// the archive has no such entry.
 pub fn zip_comic_info(path: &Path) -> ComicResult<Option<crate::ComicInfo>> {
@@ -173,30 +200,6 @@ pub fn zip_comic_info(path: &Path) -> ComicResult<Option<crate::ComicInfo>> {
         return Ok(Some(crate::parse_comic_info(&text)));
     }
     Ok(None)
-}
-
-/// Page images directly in a folder, in natural order.
-pub fn folder_pages(path: &Path) -> ComicResult<Vec<String>> {
-    let mut names: Vec<String> = Vec::new();
-    let entries = std::fs::read_dir(path).map_err(|e| ComicError::io(path, e))?;
-    for entry in entries.flatten() {
-        let file_type = match entry.file_type() {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        if !file_type.is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue;
-        }
-        if magpiecraft_scan::is_image_name(&name) {
-            names.push(name);
-        }
-    }
-    names.sort_by_key(|n| magpiecraft_scan::natural_key(n));
-    Ok(names)
 }
 
 #[cfg(test)]
@@ -230,6 +233,10 @@ mod tests {
         zip.finish().unwrap();
     }
 
+    fn no_tools() -> Helpers {
+        Helpers::new(None, None, std::env::temp_dir().join("magpie-comics-cache"))
+    }
+
     #[test]
     fn zip_pages_are_natural_ordered_and_filtered() {
         let dir = tmp_dir("zip");
@@ -245,7 +252,7 @@ mod tests {
                 ("notes.txt", b"junk"),
             ],
         );
-        let set = PageSet::open(&cbz, ContainerKind::Zip).unwrap();
+        let set = PageSet::open(&cbz, ContainerKind::Zip, &no_tools()).unwrap();
         assert_eq!(set.pages(), &["p1.jpg", "p2.jpg", "p10.jpg"]);
         assert_eq!(set.read(2).unwrap(), b"two");
         assert!(matches!(set.read(0), Err(ComicError::PageRange(0, 3))));
@@ -259,7 +266,7 @@ mod tests {
         let dir = tmp_dir("nested");
         let cbz = dir.join("vol.cbz");
         write_cbz(&cbz, &[("pages/002.jpg", b"b"), ("pages/001.jpg", b"a")]);
-        let set = PageSet::open(&cbz, ContainerKind::Zip).unwrap();
+        let set = PageSet::open(&cbz, ContainerKind::Zip, &no_tools()).unwrap();
         assert_eq!(set.pages(), &["pages/001.jpg", "pages/002.jpg"]);
         assert_eq!(set.read(1).unwrap(), b"a");
         std::fs::remove_dir_all(&dir).unwrap();
@@ -276,20 +283,26 @@ mod tests {
             std::fs::write(dir.join(name), bytes).unwrap();
         }
         std::fs::write(dir.join("readme.txt"), b"skip").unwrap();
-        let set = PageSet::open(&dir, ContainerKind::ImageFolder).unwrap();
+        let set = PageSet::open(&dir, ContainerKind::ImageFolder, &no_tools()).unwrap();
         assert_eq!(set.pages(), &["1.jpg", "2.jpg", "10.png"]);
         assert_eq!(set.read(3).unwrap(), b"10");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn unreadable_containers_say_so() {
-        let dir = tmp_dir("rar");
-        let p = dir.join("x.cbr");
-        std::fs::write(&p, b"Rar!").unwrap();
-        match PageSet::open(&p, ContainerKind::Rar) {
-            Err(e) => assert_eq!(e.kind(), "not_implemented"),
-            Ok(_) => panic!("RAR must not open"),
+    fn containers_without_their_tool_say_not_configured() {
+        let dir = tmp_dir("tools");
+        let cbr = dir.join("x.cbr");
+        std::fs::write(&cbr, b"Rar!").unwrap();
+        match PageSet::open(&cbr, ContainerKind::Rar, &no_tools()) {
+            Err(e) => assert_eq!(e.kind(), "not_configured"),
+            Ok(_) => panic!("RAR without 7-Zip must not open"),
+        }
+        let pdf = dir.join("x.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4").unwrap();
+        match PageSet::open(&pdf, ContainerKind::Pdf, &no_tools()) {
+            Err(e) => assert_eq!(e.kind(), "not_configured"),
+            Ok(_) => panic!("PDF without PdfCraft must not open"),
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }

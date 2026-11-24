@@ -8,11 +8,15 @@
 
 mod comicinfo;
 mod grouping;
+mod helpers;
 mod pageset;
+pub mod pdf;
+pub mod rar;
 mod reader;
 
 pub use comicinfo::{parse_comic_info, ComicInfo};
 pub use grouping::{parse_volume_name, ParsedName};
+pub use helpers::{enforce_cap, Helpers};
 pub use pageset::{folder_pages, zip_comic_info, zip_pages, PageSet};
 pub use reader::{Crop, FitMode, Reader, ReaderSettings, Slot, Step};
 
@@ -28,6 +32,8 @@ pub enum ComicError {
     Archive(String),
     #[error("not readable yet: {0}")]
     NotReadable(&'static str),
+    #[error("not configured: {0}")]
+    NotConfigured(&'static str),
     #[error("page {0} is outside 1..={1}")]
     PageRange(usize, usize),
     #[error("parse: {0}")]
@@ -42,6 +48,7 @@ impl ComicError {
             ComicError::Io(_, _) => "io",
             ComicError::Archive(_) => "archive",
             ComicError::NotReadable(_) => "not_implemented",
+            ComicError::NotConfigured(_) => "not_configured",
             ComicError::PageRange(_, _) => "range",
             ComicError::Parse(_) => "parse",
             ComicError::Invalid(_) => "invalid",
@@ -91,11 +98,22 @@ impl ContainerKind {
         }
     }
 
-    /// Can page bytes be produced right now, in this build, with no external
-    /// helper? Only ZIP and page folders. RAR and PDF return an explicit
-    /// `not_implemented` error instead of pretending.
+    /// Can this build produce page bytes for this container, assuming its external
+    /// tool is installed? ZIP and page folders need nothing; CBR/RAR needs 7-Zip and
+    /// PDF needs PdfCraft, and a missing tool is reported as `not_configured`.
     pub fn readable_now(self) -> bool {
-        matches!(self, ContainerKind::Zip | ContainerKind::ImageFolder)
+        matches!(
+            self,
+            ContainerKind::Zip
+                | ContainerKind::ImageFolder
+                | ContainerKind::Rar
+                | ContainerKind::Pdf
+        )
+    }
+
+    /// True when reading this container needs an external binary.
+    pub fn needs_tool(self) -> bool {
+        matches!(self, ContainerKind::Rar | ContainerKind::Pdf)
     }
 }
 
@@ -169,14 +187,21 @@ mod tests {
     }
 
     #[test]
-    fn rar_and_pdf_are_explicitly_not_readable_yet() {
-        assert!(!ContainerKind::Rar.readable_now());
-        assert!(!ContainerKind::Pdf.readable_now());
-        assert!(ContainerKind::Zip.readable_now());
-        assert_eq!(
-            ComicError::NotReadable("pdf").kind(),
-            "not_implemented",
-            "an unbuilt path must be reported as not implemented, not as an empty page list"
+    fn rar_and_pdf_need_an_external_tool() {
+        assert!(ContainerKind::Rar.needs_tool());
+        assert!(ContainerKind::Pdf.needs_tool());
+        assert!(ContainerKind::Rar.readable_now(), "supported, with 7-Zip");
+        assert!(
+            ContainerKind::Pdf.readable_now(),
+            "supported, with PdfCraft"
         );
+        assert!(ContainerKind::Zip.readable_now());
+        assert!(!ContainerKind::File.readable_now());
+        assert_eq!(
+            ComicError::NotConfigured("7-Zip").kind(),
+            "not_configured",
+            "a missing tool is a configuration fact, not a missing feature"
+        );
+        assert_eq!(ComicError::NotReadable("x").kind(), "not_implemented");
     }
 }
