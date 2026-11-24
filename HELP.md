@@ -50,6 +50,19 @@ collection.
 - **Continue reading** appears at the top when you have unfinished items.
 - A folder card shows its first readable item as its cover and how many volumes it holds.
 
+## Organise
+
+`Window > Organise` shows three things:
+
+- **Needs a human**: names the parser was unsure about, with the confidence. Rename the file or add a
+  ComicInfo.xml and the entry clears on the next scan.
+- **Plans waiting**: a saved plan with its full diff (old path, new path) and an Apply button. Nothing
+  has changed yet. Applying runs the moves and logs them.
+- **Applied plans**: every journal with an Undo button, until it has been undone once.
+
+The same flow from the CLI: `plan-rename`, read the diff, `apply <id> --confirm`, and `undo <journal>
+--confirm` if you do not like the result.
+
 ## What is not built yet
 
 The app is honest about this rather than showing an empty page:

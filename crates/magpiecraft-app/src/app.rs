@@ -17,6 +17,7 @@ use std::sync::mpsc::{channel, Receiver};
 enum Page {
     Browse,
     Reader,
+    Organise,
     Stats,
     Settings,
     Help,
@@ -54,6 +55,10 @@ enum Act {
     GoStats,
     GoSettings,
     GoHelp,
+    GoOrganise,
+    PlanRename,
+    ApplyPlan(String),
+    UndoJournal(String),
     Dialog(Dialog),
     Refresh,
     Quit,
@@ -81,9 +86,19 @@ pub struct MagpieApp {
     search_query: String,
     scan_rx: Option<Receiver<String>>,
     focus_search_next: bool,
+    organise: Option<OrganiseView>,
 }
 
-pub fn run(paths: Paths, start_key: Option<String>) -> Result<(), String> {
+/// The Organise page: what is uncertain, what is planned, what was applied.
+#[derive(Default, Clone)]
+struct OrganiseView {
+    review: Vec<serde_json::Value>,
+    plans: Vec<serde_json::Value>,
+    journals: Vec<serde_json::Value>,
+    message: String,
+}
+
+pub fn run(paths: Paths, start_key: Option<String>, start_page: &str) -> Result<(), String> {
     let catalog = Catalog::open(paths).map_err(|e| e.to_string())?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -95,13 +110,25 @@ pub fn run(paths: Paths, start_key: Option<String>) -> Result<(), String> {
     eframe::run_native(
         "MagpieCraft",
         options,
-        Box::new(move |cc| Ok(Box::new(MagpieApp::new(cc, catalog, start_key)))),
+        Box::new(move |cc| {
+            Ok(Box::new(MagpieApp::new(
+                cc,
+                catalog,
+                start_key,
+                start_page.to_string(),
+            )))
+        }),
     )
     .map_err(|e| e.to_string())
 }
 
 impl MagpieApp {
-    fn new(cc: &eframe::CreationContext<'_>, catalog: Catalog, start_key: Option<String>) -> Self {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        catalog: Catalog,
+        start_key: Option<String>,
+        start_page: String,
+    ) -> Self {
         theme::apply_text_styles(&cc.egui_ctx);
         let settings = catalog.settings().clone();
         let dark = settings.theme != "light";
@@ -134,9 +161,23 @@ impl MagpieApp {
             search_query: String::new(),
             scan_rx: None,
             focus_search_next: false,
+            organise: None,
             catalog,
         };
         app.refresh();
+        match start_page.as_str() {
+            "organise" => {
+                app.refresh_organise();
+                app.page = Page::Organise;
+            }
+            "stats" => {
+                app.stats = app.catalog.stats().ok();
+                app.page = Page::Stats;
+            }
+            "settings" => app.page = Page::Settings,
+            "help" => app.page = Page::Help,
+            _ => {}
+        }
         if let Some(key) = start_key {
             if key.starts_with("lib:") {
                 app.reader = Some(ReaderView::open(&mut app.catalog, &key));
@@ -258,6 +299,53 @@ impl MagpieApp {
                     self.stats = self.catalog.stats().ok();
                     self.page = Page::Stats;
                 }
+                Act::GoOrganise => {
+                    self.refresh_organise();
+                    self.page = Page::Organise;
+                }
+                Act::PlanRename => {
+                    let preset = self
+                        .browse
+                        .browse
+                        .kind
+                        .map(|_| "comics")
+                        .unwrap_or("comics");
+                    match self.catalog.plan_rename(None, preset, 5000) {
+                        Ok(value) => {
+                            let count = value["operations"].as_u64().unwrap_or(0);
+                            let mut view = self.organise.take().unwrap_or_default();
+                            view.message = format!(
+                                "{count} operation(s) planned. Read the diff, then apply the plan."
+                            );
+                            self.organise = Some(view);
+                            self.refresh_organise();
+                        }
+                        Err(e) => self.status = format!("plan failed: {e}"),
+                    }
+                }
+                Act::ApplyPlan(id) => match self.catalog.apply_plan(&id, true) {
+                    Ok(value) => {
+                        self.status = format!(
+                            "applied {} operation(s), {} failed",
+                            value["applied"].as_u64().unwrap_or(0),
+                            value["failed"].as_u64().unwrap_or(0)
+                        );
+                        self.refresh_organise();
+                        self.refresh();
+                    }
+                    Err(e) => self.status = format!("apply failed: {e}"),
+                },
+                Act::UndoJournal(id) => match self.catalog.undo(&id, true) {
+                    Ok(value) => {
+                        self.status = format!(
+                            "restored {} operation(s)",
+                            value["restored"].as_u64().unwrap_or(0)
+                        );
+                        self.refresh_organise();
+                        self.refresh();
+                    }
+                    Err(e) => self.status = format!("undo failed: {e}"),
+                },
                 Act::GoSettings => self.page = Page::Settings,
                 Act::GoHelp => self.page = Page::Help,
                 Act::Dialog(d) => self.dialog = d,
@@ -406,10 +494,18 @@ impl MagpieApp {
                     actions.push(Act::GoStats);
                     ui.close();
                 }
+                if ui.button("Organise").clicked() {
+                    actions.push(Act::GoOrganise);
+                    ui.close();
+                }
             });
             ui.menu_button("Window", |ui| {
                 if ui.button("Browse").clicked() {
                     actions.push(Act::GoLibraries);
+                    ui.close();
+                }
+                if ui.button("Organise").clicked() {
+                    actions.push(Act::GoOrganise);
                     ui.close();
                 }
                 if ui.button("Settings").clicked() {
@@ -492,6 +588,7 @@ impl MagpieApp {
                     None => "Reader".to_string(),
                 },
                 Page::Stats => "Statistics".to_string(),
+                Page::Organise => "Organise".to_string(),
                 Page::Settings => "Settings".to_string(),
                 Page::Help => "Help".to_string(),
             });
@@ -506,6 +603,160 @@ impl MagpieApp {
                 ui.label(browse);
             }
         });
+    }
+
+    fn refresh_organise(&mut self) {
+        let review = self
+            .catalog
+            .review(None, 200)
+            .ok()
+            .and_then(|v| {
+                v.get("entries")
+                    .and_then(serde_json::Value::as_array)
+                    .cloned()
+            })
+            .unwrap_or_default();
+        let plans = self
+            .catalog
+            .plans()
+            .ok()
+            .and_then(|v| {
+                v.get("plans")
+                    .and_then(serde_json::Value::as_array)
+                    .cloned()
+            })
+            .unwrap_or_default();
+        let journals = self
+            .catalog
+            .journals()
+            .ok()
+            .and_then(|v| {
+                v.get("journals")
+                    .and_then(serde_json::Value::as_array)
+                    .cloned()
+            })
+            .unwrap_or_default();
+        let message = self
+            .organise
+            .as_ref()
+            .map(|v| v.message.clone())
+            .unwrap_or_default();
+        self.organise = Some(OrganiseView {
+            review,
+            plans,
+            journals,
+            message,
+        });
+    }
+
+    fn organise_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
+        let view = self.organise.clone().unwrap_or_default();
+        theme::card(ui, Some(theme::ACCENT), |ui| {
+            ui.label(egui::RichText::new("Organise").size(19.0).strong());
+            ui.label(
+                "Renaming is a plan: you read the diff, then apply it. Every applied plan is journalled \
+                 and can be undone. Deleting is a move into quarantine.",
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button("Plan renames").clicked() {
+                    actions.push(Act::PlanRename);
+                }
+                if ui.button("Refresh").clicked() {
+                    actions.push(Act::GoOrganise);
+                }
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} to review, {} plan(s), {} journal(s)",
+                        view.review.len(),
+                        view.plans.len(),
+                        view.journals.len()
+                    ))
+                    .color(theme::dim_text(ui)),
+                );
+            });
+            if !view.message.is_empty() {
+                ui.label(egui::RichText::new(&view.message).color(theme::ACCENT));
+            }
+        });
+        ui.add_space(8.0);
+
+        if !view.review.is_empty() {
+            theme::card(ui, None, |ui| {
+                ui.label(egui::RichText::new("Needs a human").strong());
+                ui.label(
+                    egui::RichText::new(
+                        "Names the parser is unsure about. Rename the file, or add ComicInfo.xml; the \
+                         entry clears on the next scan.",
+                    )
+                    .color(theme::dim_text(ui)),
+                );
+                for entry in view.review.iter().take(60) {
+                    let confidence = entry["confidence"].as_f64().unwrap_or(0.0);
+                    let rel = entry["rel"].as_str().unwrap_or("");
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{confidence:.2}"))
+                                .monospace()
+                                .color(theme::ACCENT),
+                        );
+                        ui.label(rel);
+                    });
+                }
+            });
+            ui.add_space(8.0);
+        }
+
+        if !view.plans.is_empty() {
+            theme::card(ui, None, |ui| {
+                ui.label(egui::RichText::new("Plans waiting").strong());
+                for plan in view.plans.iter().take(10) {
+                    let id = plan["id"].as_str().unwrap_or("");
+                    let kind = plan["kind"].as_str().unwrap_or("");
+                    let ops = plan["operations"].as_u64().unwrap_or(0);
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{kind}  {ops} operation(s)  {id}"));
+                        if ui.button("Apply").clicked() && !id.is_empty() {
+                            actions.push(Act::ApplyPlan(id.to_string()));
+                        }
+                    });
+                    if let Some(diff) = plan["diff"].as_str() {
+                        ui.label(
+                            egui::RichText::new(
+                                diff.lines().take(12).collect::<Vec<_>>().join("\n"),
+                            )
+                            .monospace()
+                            .size(11.5)
+                            .color(theme::dim_text(ui)),
+                        );
+                    }
+                    ui.separator();
+                }
+            });
+            ui.add_space(8.0);
+        }
+
+        if !view.journals.is_empty() {
+            theme::card(ui, None, |ui| {
+                ui.label(egui::RichText::new("Applied plans").strong());
+                for journal in view.journals.iter().take(10) {
+                    let id = journal["id"].as_str().unwrap_or("");
+                    let kind = journal["kind"].as_str().unwrap_or("");
+                    let applied = journal["applied"].as_u64().unwrap_or(0);
+                    let undone = journal["undone"].as_bool().unwrap_or(false);
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "{kind}  {applied} operation(s)  {}{}",
+                            id,
+                            if undone { "  (undone)" } else { "" }
+                        ));
+                        if !undone && ui.button("Undo").clicked() && !id.is_empty() {
+                            actions.push(Act::UndoJournal(id.to_string()));
+                        }
+                    });
+                }
+            });
+        }
     }
 
     fn settings_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
@@ -782,6 +1033,8 @@ impl MagpieApp {
                             ("Full rescan", Act::ScanFull),
                             ("Toggle theme", Act::Theme),
                             ("Statistics", Act::GoStats),
+                            ("Organise", Act::GoOrganise),
+                            ("Plan renames", Act::PlanRename),
                             ("Settings", Act::GoSettings),
                             ("Libraries", Act::GoLibraries),
                             ("Help", Act::GoHelp),
@@ -991,6 +1244,11 @@ impl eframe::App for MagpieApp {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| self.stats_page(ui));
+                }
+                Page::Organise => {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.organise_page(ui, &mut actions));
                 }
                 Page::Settings => {
                     egui::ScrollArea::vertical()

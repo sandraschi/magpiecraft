@@ -26,6 +26,9 @@ struct Cli {
     /// Start at one library or folder key.
     #[arg(long)]
     key: Option<String>,
+    /// Start on a page: browse, organise, stats, settings or help.
+    #[arg(long, default_value = "browse")]
+    page: String,
     /// Headless check: open the catalogue, browse, read one page list, exit.
     #[arg(long)]
     smoke: bool,
@@ -49,7 +52,7 @@ fn main() -> std::process::ExitCode {
             }
         };
     }
-    match app::run(paths, cli.key) {
+    match app::run(paths, cli.key, &cli.page) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("[magpiecraft] {e}");

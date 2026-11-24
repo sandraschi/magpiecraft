@@ -21,6 +21,10 @@ command bus in process.
 |---|---|---|
 | ![Library grid](docs/screenshots/library-grid.png) | ![Folders](docs/screenshots/browse-volumes.png) | ![Reader](docs/screenshots/reader-page.png) |
 
+| Organise: plans, diffs and undo |
+|---|
+| ![Organise](docs/screenshots/organise.png) |
+
 Screenshots come from the synthetic demo library (`scripts/make-demo-library.ps1`), never from a real
 collection, so no copyrighted page is published. How to reproduce them: `docs/DEVELOPMENT.md`.
 
