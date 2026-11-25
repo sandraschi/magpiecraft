@@ -121,6 +121,8 @@ pub struct Settings {
     pub extract_cache_mb: u64,
     /// Ceiling for rendered PDF pages, in MiB.
     pub render_cache_mb: u64,
+    /// Folders that hold backups, checked by ackup_status.
+    pub backup_roots: Vec<String>,
 }
 
 impl Default for Settings {
@@ -138,6 +140,7 @@ impl Default for Settings {
             pdf_dpi: 200,
             extract_cache_mb: 8192,
             render_cache_mb: 2048,
+            backup_roots: Vec::new(),
         }
     }
 }
