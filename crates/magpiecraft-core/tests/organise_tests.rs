@@ -292,6 +292,123 @@ fn a_subtitle_is_kept_after_the_volume() {
 }
 
 #[test]
+fn a_backup_copy_is_verified_and_undo_removes_only_the_copy() {
+    let (home, root) = fixture("backup");
+    let drive = tmp("backup-drive");
+    let mut c = catalog(&home);
+    c.add_library("Comics", &root.display().to_string(), "comics", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let before: Vec<(String, Vec<u8>)> = ["Saga/Saga 054.cbz", "Saga/Saga 055.cbz"]
+        .iter()
+        .map(|rel| {
+            (
+                rel.to_string(),
+                std::fs::read(root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR))).unwrap(),
+            )
+        })
+        .collect();
+
+    let planned = c
+        .plan_backup(Some("Comics"), &drive.display().to_string(), true, 0)
+        .unwrap();
+    assert_eq!(planned["verify"], serde_json::json!(true));
+    let plan = &planned["plans"][0];
+    let ops = plan["operations"].as_u64().unwrap();
+    assert_eq!(ops, 3, "every item in the fixture is planned once");
+    let id = plan["id"].as_str().unwrap().to_string();
+
+    // Nothing copied yet.
+    assert!(!drive.join("Comics").exists());
+
+    let applied = c.apply_plan(&id, true).unwrap();
+    assert_eq!(applied["applied"].as_u64().unwrap(), 3);
+    assert_eq!(applied["failed"].as_u64().unwrap(), 0);
+    // Bytes are identical and the library is untouched.
+    for (rel, bytes) in &before {
+        let copied = drive
+            .join("Comics")
+            .join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        assert_eq!(&std::fs::read(&copied).unwrap(), bytes, "{rel}");
+        assert_eq!(
+            &std::fs::read(root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR))).unwrap(),
+            bytes
+        );
+    }
+
+    // A second plan copies nothing: the backup is already complete.
+    let again = c
+        .plan_backup(Some("Comics"), &drive.display().to_string(), true, 0)
+        .unwrap();
+    assert_eq!(again["operations"], serde_json::json!(0));
+
+    // Undo removes the copies and nothing else.
+    let journal = applied["journal"].as_str().unwrap().to_string();
+    let undone = c.undo(&journal, true).unwrap();
+    assert_eq!(undone["restored"].as_u64().unwrap(), 3);
+    for (rel, _) in &before {
+        let copied = drive
+            .join("Comics")
+            .join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        assert!(!copied.exists(), "{rel} should be gone from the backup");
+        assert!(root
+            .join(rel.replace('/', std::path::MAIN_SEPARATOR_STR))
+            .is_file());
+    }
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_dir_all(&drive).unwrap();
+}
+
+#[test]
+fn a_backup_never_overwrites_a_different_file_and_refuses_a_bad_root() {
+    let (home, root) = fixture("backup-guard");
+    let drive = tmp("backup-guard-drive");
+    let mut c = catalog(&home);
+    c.add_library("Comics", &root.display().to_string(), "comics", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+
+    // A target that already has a different size is reported, not clobbered.
+    std::fs::create_dir_all(drive.join("Comics/Saga")).unwrap();
+    std::fs::write(drive.join("Comics/Saga/Saga 054.cbz"), b"a different file").unwrap();
+    let planned = c
+        .plan_backup(Some("Comics"), &drive.display().to_string(), true, 0)
+        .unwrap();
+    let diff = planned["plans"][0]["diff"].as_str().unwrap();
+    assert!(diff.contains("different size"), "{diff}");
+    assert_eq!(
+        std::fs::read(drive.join("Comics/Saga/Saga 054.cbz")).unwrap(),
+        b"a different file"
+    );
+
+    // A missing backup root is an error, not a silent empty plan.
+    assert_eq!(
+        c.plan_backup(Some("Comics"), "Z:/not-mounted", true, 0)
+            .unwrap_err()
+            .kind(),
+        "invalid"
+    );
+
+    // A backup root inside the library is refused.
+    let inside = root.join("backup-inside");
+    std::fs::create_dir_all(&inside).unwrap();
+    let planned = c
+        .plan_backup(Some("Comics"), &inside.display().to_string(), true, 0)
+        .unwrap();
+    assert_eq!(planned["operations"], serde_json::json!(0));
+    assert!(planned["plans"][0]["diff"]
+        .as_str()
+        .unwrap()
+        .contains("inside the library"));
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_dir_all(&drive).unwrap();
+}
+
+#[test]
 fn naming_rules_are_pure_and_predictable() {
     let input = NamingInput {
         rel: "Saga/Saga 054.cbz".to_string(),
