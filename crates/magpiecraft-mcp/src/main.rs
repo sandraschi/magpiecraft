@@ -136,6 +136,11 @@ enum Cmd {
     },
     /// Counts, sizes, pages and drives.
     Stats,
+    /// Near duplicates: perceptual images, videos with the same title and year.
+    NearDupes {
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
     /// Exact duplicates by BLAKE3.
     Dupes {
         library: Option<String>,
@@ -447,6 +452,10 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
                 library: library.clone(),
                 limit: *limit,
             };
+            (c.id(), c)
+        }
+        Cmd::NearDupes { limit } => {
+            let c = Command::NearDuplicates { limit: *limit };
             (c.id(), c)
         }
         Cmd::Hash { key } => {

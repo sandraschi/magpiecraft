@@ -132,6 +132,10 @@ pub enum Command {
         roots: Vec<String>,
         clear: bool,
     },
+    /// Near duplicates: perceptual images, and videos with the same title and year.
+    NearDuplicates {
+        limit: usize,
+    },
     /// Build (but do not apply) a rename plan.
     PlanRename {
         library: Option<String>,
@@ -197,6 +201,7 @@ impl Command {
             Command::VerifyRun { .. } => "verify.run",
             Command::BackupStatus => "backup.status",
             Command::BackupRoots { .. } => "backup.roots",
+            Command::NearDuplicates { .. } => "dupes.near",
             Command::PlanRename { .. } => "plan.rename",
             Command::PlanQuarantine { .. } => "plan.quarantine",
             Command::PlanCleanup { .. } => "plan.cleanup",
@@ -316,6 +321,7 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
         } => catalog.verify_run(library.as_deref(), every_days, force),
         Command::BackupStatus => catalog.backup_status(),
         Command::BackupRoots { roots, clear } => catalog.set_backup_roots(&roots, clear),
+        Command::NearDuplicates { limit } => catalog.near_duplicates(limit),
         Command::PlanRename {
             library,
             preset,

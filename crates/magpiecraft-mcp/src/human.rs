@@ -517,6 +517,33 @@ pub fn print(command: &str, value: &Value) {
                 }
             }
         }
+        "dupes.near" => {
+            println!(
+                "{} image group(s), {} possible video duplicate group(s), {} extra copies",
+                n(value, "image_groups"),
+                n(value, "video_groups"),
+                n(value, "extra_copies")
+            );
+            if let Some(groups) = value.get("groups").and_then(Value::as_array) {
+                for group in groups.iter().take(20) {
+                    println!(
+                        "  [{}] {}",
+                        s(group, "kind"),
+                        group
+                            .get("items")
+                            .and_then(Value::as_array)
+                            .map(|i| i.len())
+                            .unwrap_or(0)
+                    );
+                    if let Some(items) = group.get("items").and_then(Value::as_array) {
+                        for item in items {
+                            println!("    {:<52} {}", s(item, "title"), s(item, "key"));
+                        }
+                    }
+                }
+            }
+            println!("  {}", s(value, "note"));
+        }
         "hash" => println!("{}  {}", s(value, "hash"), s(value, "key")),
         "manifest.write" => println!(
             "manifest {} ({} files, {})",
