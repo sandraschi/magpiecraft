@@ -544,6 +544,45 @@ pub fn print(command: &str, value: &Value) {
             }
             println!("  {}", s(value, "note"));
         }
+        "subs" => {
+            println!("{}", s(value, "title"));
+            if let Some(sidecars) = value.get("sidecars").and_then(Value::as_array) {
+                if sidecars.is_empty() {
+                    println!("  no sidecar subtitles");
+                }
+                for side in sidecars {
+                    println!(
+                        "  {:<28} {:<5} {:>4} cue(s)  {}",
+                        s(side, "name"),
+                        s(side, "format"),
+                        side.get("cues").and_then(Value::as_i64).unwrap_or(0),
+                        s(side, "path")
+                    );
+                }
+            }
+            if let Some(embedded) = value.get("embedded").and_then(Value::as_array) {
+                for track in embedded {
+                    println!(
+                        "  embedded #{} {:<10} {}",
+                        track
+                            .get("subtitle_index")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0),
+                        s(track, "codec"),
+                        s(track, "language")
+                    );
+                }
+            }
+        }
+        "subs.shift" | "subs.convert" | "subs.extract" => {
+            println!("{} -> {}", s(value, "source"), s(value, "out"));
+            if value.get("cues").is_some() {
+                println!("  {} cue(s)", n(value, "cues"));
+            }
+            if n(value, "dropped") > 0 {
+                println!("  {} cue(s) dropped before the start", n(value, "dropped"));
+            }
+        }
         "hash" => println!("{}  {}", s(value, "hash"), s(value, "key")),
         "manifest.write" => println!(
             "manifest {} ({} files, {})",

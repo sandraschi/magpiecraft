@@ -84,14 +84,18 @@ pub fn tools() -> Value {
              open: hand a film, track, book or photo to the user's player or OS handler, resuming where it \
              left off. open runs a program on the user's machine; it never decodes media itself.",
             json!({
-                "operation": ops(&["volume", "page_offset", "rtl", "progress_get", "progress_set", "page_export", "open"]),
+                "operation": ops(&["volume", "page_offset", "rtl", "progress_get", "progress_set", "page_export", "open", "subs", "subs_shift", "subs_convert", "subs_extract"]),
                 "key": key,
                 "offset": { "type": "integer", "description": "page_offset: scan page minus printed page" },
                 "rtl": { "type": ["boolean", "null"], "description": "rtl: true, false, or null to clear" },
                 "page": { "type": "integer", "description": "progress_set: current page; page_export: page to write" },
                 "total": { "type": "integer", "description": "progress_set: page count if unknown" },
                 "finished": { "type": "boolean", "description": "progress_set: mark as finished" },
-                "out": { "type": "string", "description": "page_export: file to write the page to" }
+                "out": { "type": "string", "description": "page_export: file to write the page to; subs_*: output file" },
+                "path": { "type": "string", "description": "subs_shift/subs_convert: the subtitle file to read" },
+                "by": { "type": "number", "description": "subs_shift: seconds to move the cues, negative to advance" },
+                "to": { "type": "string", "description": "subs_convert: srt or vtt" },
+                "stream": { "type": "integer", "description": "subs_extract: subtitle stream index, 0 is the first" }
             }),
             &["operation"]
         ),
@@ -244,6 +248,24 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
             // is the one read tool with a visible side effect, so it says so.
             "open" => Command::OpenItem {
                 key: req_str(args, "key")?,
+            },
+            "subs" => Command::Subs {
+                key: req_str(args, "key")?,
+            },
+            "subs_shift" | "subs.shift" => Command::SubsShift {
+                path: req_str(args, "path")?,
+                seconds: args.get("by").and_then(Value::as_f64).unwrap_or(0.0),
+                out: opt_str(args, "out"),
+            },
+            "subs_convert" | "subs.convert" => Command::SubsConvert {
+                path: req_str(args, "path")?,
+                to: req_str(args, "to")?,
+                out: opt_str(args, "out"),
+            },
+            "subs_extract" | "subs.extract" => Command::SubsExtract {
+                key: req_str(args, "key")?,
+                subtitle_index: opt_usize(args, "stream").unwrap_or(0) as u32,
+                out: req_str(args, "out")?,
             },
             "page_offset" | "offset" => Command::PageOffset {
                 key: req_str(args, "key")?,

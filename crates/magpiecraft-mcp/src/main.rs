@@ -211,6 +211,33 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// Subtitle sidecars and embedded tracks for one item.
+    Subs { key: String },
+    /// Shift a subtitle file by seconds into a new file.
+    SubsShift {
+        path: String,
+        #[arg(long, allow_hyphen_values = true)]
+        by: f64,
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Convert a subtitle file to srt or vtt into a new file.
+    SubsConvert {
+        path: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Extract an embedded subtitle stream with ffmpeg.
+    SubsExtract {
+        key: String,
+        /// 0 is the first subtitle stream.
+        #[arg(long, default_value_t = 0)]
+        stream: u32,
+        #[arg(long)]
+        out: String,
+    },
     /// Where each library stands against the configured backup roots.
     Backup,
     /// Build a verified backup copy plan (nothing is copied until applied).
@@ -529,6 +556,34 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
         }
         Cmd::BenchScan { .. } | Cmd::Mcp => {
             return Err("internal: command handled before the catalogue was opened".to_string())
+        }
+        Cmd::Subs { key } => {
+            let c = Command::Subs { key: key.clone() };
+            (c.id(), c)
+        }
+        Cmd::SubsShift { path, by, out } => {
+            let c = Command::SubsShift {
+                path: path.clone(),
+                seconds: *by,
+                out: out.clone(),
+            };
+            (c.id(), c)
+        }
+        Cmd::SubsConvert { path, to, out } => {
+            let c = Command::SubsConvert {
+                path: path.clone(),
+                to: to.clone(),
+                out: out.clone(),
+            };
+            (c.id(), c)
+        }
+        Cmd::SubsExtract { key, stream, out } => {
+            let c = Command::SubsExtract {
+                key: key.clone(),
+                subtitle_index: *stream,
+                out: out.clone(),
+            };
+            (c.id(), c)
         }
         Cmd::Backup => (Command::BackupStatus.id(), Command::BackupStatus),
         Cmd::BackupPlan {
