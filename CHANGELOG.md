@@ -2,6 +2,25 @@
 
 All notable changes to MagpieCraft. Newest first. Dates are the day the work landed.
 
+## 0.7.0 - 2026-11-25 (Tier 3: verified backup copy)
+
+Added:
+
+- **`backup-plan --to <root>`** (MCP `media_health backup_plan`) plans the copies a backup still
+  needs: only files missing at the target, never a file whose size differs (reported, not clobbered),
+  and it refuses a root that is not mounted or that sits inside the library.
+- **Verified copies.** Applying a backup plan copies each file and hashes both sides with BLAKE3. A
+  copy that does not match is deleted again and reported as a failure. `--fast` keeps the size check
+  only.
+- **`Copy` as a plan operation**, next to `Move` and `Write`, with undo that removes the copies and
+  never touches the library. A backup run no longer triggers a pointless rescan.
+- Measured on the real collection: 55 files / 993 MB copied and verified in 10 s, 0 failures; backup
+  status then reported "complete, 55 files, 55 items"; undo removed all 55 and left the library
+  untouched.
+
+166 tests. Still planned in Tier 3: ffmpeg presets, subtitle tools (extract, convert, shift, local
+generation), SMART drive health.
+
 ## 0.6.0 - 2026-11-25 (Tier 3: near duplicates)
 
 Added:

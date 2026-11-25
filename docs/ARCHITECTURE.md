@@ -229,6 +229,12 @@ Rules worth knowing:
 - Backup status is a count of files per library under each configured root. It catches a
   backup that never started, one that stopped halfway, and one that is stale. It is not a
   checksum check; manifests and `verify_run` are.
+- A backup copy is a plan like any other mutation: `backup-plan --to <root>` lists only the files
+  the backup is missing, refuses a root that is inside the library or not mounted, and never
+  overwrites a file whose size differs (it reports it instead). On apply each copy is hashed with
+  BLAKE3 against its source; a copy that does not match is deleted and reported as a failure,
+  because a wrong backup is worse than a missing one. Undo removes the copies, never the library.
+  There is a `Copy` op next to `Move` and `Write` for exactly this.
 - Near duplicates answer two different questions and say which one they answered:
   - **Images**: a 64-bit dHash (9x8 grayscale, one bit per horizontal neighbour pair) compared
     by Hamming distance. Resized and recompressed copies land within 10 bits; a different photo

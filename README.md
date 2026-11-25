@@ -89,7 +89,7 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Verification schedule | Implemented | `verify` says what is due (default 30 days); `verify-run` writes the baseline, compares afterwards, and records every run |
 | Cleanup: empty folders, orphan sidecars, samples, junk | Implemented | A plan of quarantines with reasons; an ebook library is never touched automatically |
 | Backup status (3-2-1 view) | Implemented | Compares each library with the copies under the configured backup roots; a count, not a checksum |
-| Verified backup copy | Planned | The copy is a plan with a journal; it lands with the next integrity pass |
+| Verified backup copy | Implemented | `backup-plan --to <root>` copies what is missing, checksums every copy against its source, never overwrites, and undo removes only the copies |
 | Near-duplicate detection | Implemented | Images by perceptual hash (dHash, 10 of 64 bits); videos by title, year, episode marker and Part/CD suffix. The report says which is which |
 | Drive health (SMART) | Planned | Needs a Windows API pass |
 | FTS5 search | Implemented | Prefix tokens, diacritics folded, substring fallback |
@@ -216,7 +216,7 @@ Nothing is ever written into a library. Covers, caches and manifests live here.
 
 Measured 2026-11-24 on the Tier 2 commit:
 
-- `cargo test --workspace`: **164 passed**, 0 failed
+- `cargo test --workspace`: **166 passed**, 0 failed
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean
   (`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented` denied workspace-wide)
 - `cargo fmt --all --check`: clean

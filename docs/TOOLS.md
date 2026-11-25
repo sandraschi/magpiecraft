@@ -35,6 +35,9 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `verify-run [library] [--every-days N] [--force]` | Write the baseline on the first run, compare afterwards, record every run |
 | `backup` | Where each library stands against the configured backup roots |
 | `backup-roots [paths...] [--clear]` | Set or clear the backup roots |
+| `backup-plan --to <root> [library] [--fast] [--limit N]` | Plan the copies a backup still needs: size check by default, `--fast` skips the checksum |
+| `apply <plan-id> --confirm` | Applies a backup plan too: copies, then verifies each copy against its source |
+| `undo <journal-id> --confirm` | For a backup journal, removes the copies and leaves the library alone |
 | `series [library]` | Series with their direction overrides |
 | `series-rtl <library> <series> [--on\|--off]` | Set the reading direction of a series |
 | `inspect <path>` | ffprobe technical details for one media file |
@@ -137,6 +140,7 @@ nothing happens.
 | `verify_status` | `every_days` | Per-library due state and what the last run found |
 | `verify_run` | `library`, `every_days`, `force` | Baseline or comparison, recorded per run |
 | `backup_status` | - | Each library against the configured backup roots |
+| `backup_plan` | `library`, `to`, `verify`, `limit` | A copy plan: what the backup still needs. `verify` checksums every copy on apply |
 | `near_duplicates` | `limit` | Perceptual image groups and possible video duplicates |
 
 Tool names are accepted with underscores (`media_catalog`) or dots (`media.catalog`), because some MCP
