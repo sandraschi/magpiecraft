@@ -91,6 +91,19 @@ implemented as a dead end. Now:
 152 tests, clippy and fmt clean. Live check launched VLC on a real film and continue showed
 `0:00 / 1:44:28`.
 
+## Tier 3, first slice: integrity
+
+- **Verification schedule:** `verify` says which libraries are due and what the last run found;
+  `verify-run` writes the baseline first, compares afterwards, and records each run (schema 6,
+  `verifications`). Live: 55 files / 1 GB baselined in 8 s.
+- **Cleanup planner:** empty folders, orphan sidecars, samples and junk as quarantines with reasons;
+  kind-aware (an ebook library is never touched automatically); apply on confirm, undo restores.
+- **Backup status:** per library, complete / partial / not backed up against the configured roots; a
+  count, not a checksum. Unconfigured is the honest default and is the current state.
+
+Next in Tier 3: perceptual near-duplicates, SMART drive health, ffmpeg presets, subtitle tools
+(extract, convert, shift, local generation) and the verified backup copy.
+
 ## Next step
 
 1. The remaining A2 work, in this order: identify from metadata (local dumps first: GCD, MangaBaka,
