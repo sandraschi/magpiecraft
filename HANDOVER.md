@@ -123,6 +123,17 @@ fixed in the same pass.
 
 Remaining in Tier 3: the verified backup copy, ffmpeg presets, subtitle tools, SMART drive health.
 
+## Tier 3, third slice: verified backup copy
+
+- `backup-plan --to <root>`: only what the backup is missing; refuses an unmounted root or one inside
+  the library; never overwrites a different size.
+- Apply copies then hashes both sides with BLAKE3; a mismatched copy is deleted and reported.
+  `--fast` = size check only. Undo removes copies, never the library.
+- Live: 55 files / 993 MB copied and verified in 10 s, 0 failures; status "complete, 55 of 55 items";
+  undo removed all 55.
+
+166 tests. Remaining: ffmpeg presets, subtitle tools, SMART drive health.
+
 ## Next step
 
 1. The remaining A2 work, in this order: identify from metadata (local dumps first: GCD, MangaBaka,
