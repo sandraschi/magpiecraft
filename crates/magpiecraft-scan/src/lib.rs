@@ -121,6 +121,8 @@ pub struct DirInfo {
     pub name: String,
     /// Images directly in this folder.
     pub images: usize,
+    /// All files directly in this folder, of any kind.
+    pub files: usize,
     /// Subfolders that were walked.
     pub subdirs: usize,
     /// True when this folder is itself a readable volume.
@@ -244,6 +246,7 @@ struct RawDir {
     parent: String,
     name: String,
     images: usize,
+    files: usize,
     subdirs: usize,
     children: Vec<usize>,
     volume: bool,
@@ -293,6 +296,7 @@ pub fn walk(root: &Path, opts: &WalkOptions) -> ScanResult<WalkOutcome> {
             parent: parent_rel,
             rel: rel.clone(),
             images: 0,
+            files: 0,
             subdirs: 0,
             children: Vec::new(),
             volume: false,
@@ -312,6 +316,7 @@ pub fn walk(root: &Path, opts: &WalkOptions) -> ScanResult<WalkOutcome> {
         };
         let mut local_dirs: Vec<(PathBuf, String)> = Vec::new();
         let mut images = 0usize;
+        let mut dir_files = 0usize;
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             let file_type = match entry.file_type() {
@@ -352,6 +357,7 @@ pub fn walk(root: &Path, opts: &WalkOptions) -> ScanResult<WalkOutcome> {
             if is_image_name(&name) {
                 images += 1;
             }
+            dir_files += 1;
             bytes = bytes.saturating_add(meta.len());
             files.push(FileInfo {
                 rel: join_rel(&rel, &name),
@@ -367,6 +373,7 @@ pub fn walk(root: &Path, opts: &WalkOptions) -> ScanResult<WalkOutcome> {
         }
         if let Some(d) = dirs.get_mut(idx) {
             d.images = images;
+            d.files = dir_files;
             d.subdirs = local_dirs.len();
         }
         // Reverse push so the walk visits folders in natural name order.
@@ -404,6 +411,7 @@ pub fn walk(root: &Path, opts: &WalkOptions) -> ScanResult<WalkOutcome> {
             parent: d.parent.clone(),
             name: d.name.clone(),
             images: d.images,
+            files: d.files,
             subdirs: d.subdirs,
             volume: d.volume,
         })
