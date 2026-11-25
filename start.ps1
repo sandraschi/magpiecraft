@@ -1,9 +1,12 @@
 # MagpieCraft launcher: builds the release binaries if they are missing, then starts the app.
 # Double-click start.bat, or run: pwsh -File start.ps1
-[CmdletBinding()]
+# NOTE: keep local variable names away from parameter names ($cliExe, not $cli:
+# PowerShell variables are case-insensitive, so $cli collides with the [switch]$Cli
+# parameter and binding fails. $Home is worse: it is a read-only automatic variable,
+# so the home override is called $DataHome.
 param(
     [switch]$Cli,
-    [string]$Home,
+    [string]$DataHome,
     [switch]$Smoke
 )
 
@@ -23,25 +26,25 @@ function Require-Command {
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 Require-Command cargo "Install Rust from https://rustup.rs and reopen this window."
 
-if ($Home) { $env:MAGPIECRAFT_HOME = $Home }
+if ($DataHome) { $env:MAGPIECRAFT_HOME = $DataHome }
 
-$app = Join-Path $root 'target\release\magpiecraft.exe'
-$cli = Join-Path $root 'target\release\magpiecraft-mcp.exe'
-if (-not (Test-Path $app) -or -not (Test-Path $cli)) {
+$appExe = Join-Path $root 'target\release\magpiecraft.exe'
+$cliExe = Join-Path $root 'target\release\magpiecraft-mcp.exe'
+if (-not (Test-Path $appExe) -or -not (Test-Path $cliExe)) {
     Write-Host 'Building MagpieCraft (first run takes a few minutes)...' -ForegroundColor Cyan
     cargo build --release --workspace
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 if ($Cli) {
-    & $cli status
+    & $cliExe status
     exit $LASTEXITCODE
 }
 
 if ($Smoke) {
-    & $app --smoke
+    & $appExe --smoke
     exit $LASTEXITCODE
 }
 
 Write-Host 'Starting MagpieCraft...' -ForegroundColor Cyan
-Start-Process -FilePath $app -WorkingDirectory $root
+Start-Process -FilePath $appExe -WorkingDirectory $root
