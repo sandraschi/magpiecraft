@@ -184,6 +184,9 @@ enum Cmd {
         imgdir_min_pages: Option<usize>,
         #[arg(long)]
         theme: Option<String>,
+        /// Skin id: magpie-ink, paper-library or neon-shelf. Wins over --theme.
+        #[arg(long)]
+        skin: Option<String>,
         #[arg(long)]
         zoom: Option<f32>,
     },
@@ -554,12 +557,14 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
             mature,
             imgdir_min_pages,
             theme,
+            skin,
             zoom,
         } => {
             let c = Command::SettingsSet {
                 mature_visible: *mature,
                 imgdir_min_pages: *imgdir_min_pages,
                 theme: theme.clone(),
+                skin: skin.clone(),
                 zoom: *zoom,
             };
             (c.id(), c)

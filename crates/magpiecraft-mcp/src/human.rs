@@ -670,8 +670,9 @@ pub fn print(command: &str, value: &Value) {
             }
         }
         "settings" => println!(
-            "theme {}  zoom {:.2}  mature visible {}  page folder >= {} images",
+            "theme {}  skin {}  zoom {:.2}  mature visible {}  page folder >= {} images",
             s(value, "theme"),
+            s(value, "skin"),
             value.get("zoom").and_then(Value::as_f64).unwrap_or(1.0),
             value
                 .get("mature_visible")

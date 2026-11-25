@@ -56,7 +56,8 @@ pub fn tools() -> Value {
                 "limit": { "type": "integer", "description": "continue: how many entries (default 12)" },
                 "mature_visible": { "type": "boolean", "description": "settings_set: show mature libraries" },
                 "imgdir_min_pages": { "type": "integer", "description": "settings_set: images needed for a page folder to be a volume" },
-                "theme": { "type": "string", "description": "settings_set: dark or light" },
+                "theme": { "type": "string", "description": "settings_set: legacy, maps dark/light to the default skin of that mode" },
+                "skin": { "type": "string", "description": "settings_set: magpie-ink, paper-library or neon-shelf (wins over theme)" },
                 "zoom": { "type": "number", "description": "settings_set: UI zoom 0.6 to 2.5" }
             }),
             &["operation"]
@@ -232,6 +233,7 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
                 mature_visible: opt_bool(args, "mature_visible"),
                 imgdir_min_pages: opt_usize(args, "imgdir_min_pages"),
                 theme: opt_str(args, "theme"),
+                skin: opt_str(args, "skin"),
                 zoom: args.get("zoom").and_then(Value::as_f64).map(|z| z as f32),
             },
             other => return Err(format!("unknown media_catalog operation: {other}")),
