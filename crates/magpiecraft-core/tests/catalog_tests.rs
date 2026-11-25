@@ -899,6 +899,64 @@ fn near_duplicates_find_a_resized_photo_copy() {
 }
 
 #[test]
+fn subtitle_sidecars_are_listed_shifted_and_converted_without_touching_the_source() {
+    let home = tmp("subs-home");
+    let root = tmp("subs-library");
+    std::fs::write(root.join("Film 2020.mkv"), b"not a real film").unwrap();
+    let srt = "1\r\n00:00:01,000 --> 00:00:03,500\r\nHello\r\n\r\n2\r\n00:00:04,000 --> 00:00:06,000\r\nWorld\r\n";
+    std::fs::write(root.join("Film 2020.srt"), srt).unwrap();
+    let mut c = catalog(&home);
+    c.add_library("Video", &root.display().to_string(), "video", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let item = c.browse(Some("lib:1|")).unwrap().items.remove(0);
+
+    let listing = c.subs_list(&item.key).unwrap();
+    assert_eq!(listing["sidecars"].as_array().unwrap().len(), 1);
+    assert_eq!(listing["sidecars"][0]["format"], serde_json::json!("srt"));
+    assert_eq!(listing["sidecars"][0]["cues"], serde_json::json!(2));
+
+    // Shift by 1.5 seconds into a new file.
+    let sidecar = root.join("Film 2020.srt");
+    let shifted = c
+        .subs_shift(&sidecar.display().to_string(), 1.5, None)
+        .unwrap();
+    let out = std::path::PathBuf::from(shifted["out"].as_str().unwrap());
+    assert!(out.is_file());
+    let shifted_text = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        shifted_text.contains("00:00:02,500 --> 00:00:05,000"),
+        "{shifted_text}"
+    );
+    // The original is byte-identical.
+    assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), srt);
+    // And a second shift of the same file refuses to overwrite the first.
+    assert_eq!(
+        c.subs_shift(&sidecar.display().to_string(), 1.5, None)
+            .unwrap_err()
+            .kind(),
+        "invalid"
+    );
+
+    // Convert the shifted file to WebVTT.
+    let converted = c
+        .subs_convert(&out.display().to_string(), "vtt", None)
+        .unwrap();
+    let vtt = std::fs::read_to_string(converted["out"].as_str().unwrap()).unwrap();
+    assert!(vtt.starts_with("WEBVTT"));
+    assert!(vtt.contains("00:00:02.500 --> 00:00:05.000"), "{vtt}");
+
+    // ASS output is refused with a reason, not silently produced.
+    let err = c
+        .subs_convert(&out.display().to_string(), "ass", None)
+        .unwrap_err();
+    assert_eq!(err.kind(), "not_implemented");
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn status_reports_the_engine_and_the_optional_tools() {
     let (home, root) = fixture("status");
     let mut c = catalog(&home);
