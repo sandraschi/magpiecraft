@@ -134,6 +134,18 @@ Remaining in Tier 3: the verified backup copy, ffmpeg presets, subtitle tools, S
 
 166 tests. Remaining: ffmpeg presets, subtitle tools, SMART drive health.
 
+## Tier 3, fourth slice: subtitles
+
+- `subs`, `subs-shift`, `subs-convert`, `subs-extract`: sidecar discovery, signed cue shifting, SRT to
+  WebVTT and back, and embedded-track extraction through ffmpeg (now part of the toolchain).
+- Pure text, tolerant parsing (BOM, CRLF, VTT headers, NOTE, ids, settings), shift truncates at zero
+  instead of stretching, ASS read-only with a reason, and every operation writes a new file rather than
+  editing the original.
+- A test file was briefly copied into the real collection to prove `subs`; it was removed at once and
+  the directory verified. Recorded in the session log, because that rule binds me too.
+
+173 tests. Remaining: ffmpeg presets, SMART drive health, local subtitle generation.
+
 ## Next step
 
 1. The remaining A2 work, in this order: identify from metadata (local dumps first: GCD, MangaBaka,
