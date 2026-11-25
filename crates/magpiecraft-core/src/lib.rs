@@ -12,6 +12,7 @@ pub mod cover;
 pub mod error;
 pub mod images;
 pub mod model;
+pub mod neardupe;
 pub mod organise;
 pub mod verify;
 
