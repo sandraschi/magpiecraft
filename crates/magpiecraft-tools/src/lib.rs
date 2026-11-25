@@ -41,6 +41,8 @@ impl ToolError {
 pub const ENV_FFPROBE: &str = "MAGPIECRAFT_FFPROBE";
 pub const ENV_SEVEN_ZIP: &str = "MAGPIECRAFT_7Z";
 pub const ENV_PDFCRAFT: &str = "MAGPIECRAFT_PDFCRAFT";
+/// The player used for "open with player". A file path or a program name.
+pub const ENV_PLAYER: &str = "MAGPIECRAFT_PLAYER";
 
 /// Resolve an executable: absolute path from `env`, else PATH, else the first
 /// existing candidate in `fallbacks`.
@@ -187,6 +189,221 @@ fn run(path: &Path, args: &[&str]) -> ToolResult<String> {
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+// ---------------------------------------------------------------- players
+/// How a file is handed to a player. MagpieCraft never decodes video itself: it
+/// launches a real player with the file and, for films and tracks, the position it
+/// left off at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayerKind {
+    Vlc,
+    Mpv,
+    /// Whatever the OS associates with the extension.
+    OsDefault,
+}
+
+impl PlayerKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            PlayerKind::Vlc => "VLC",
+            PlayerKind::Mpv => "mpv",
+            PlayerKind::OsDefault => "the OS default handler",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Player {
+    pub kind: PlayerKind,
+    /// `None` only for `OsDefault`, which uses the shell.
+    pub exe: Option<PathBuf>,
+}
+
+/// Choose from candidates that are known to exist, in priority order.
+///
+/// Pure so the precedence is testable without the machine's software. VLC first
+/// because it takes `--start-time`; mpv next because it takes `--start`.
+pub fn choose_player(
+    explicit: Option<PathBuf>,
+    vlc: Option<PathBuf>,
+    mpv: Option<PathBuf>,
+) -> Player {
+    if let Some(exe) = explicit {
+        let kind = if exe
+            .file_name()
+            .map(|n| n.to_string_lossy().to_ascii_lowercase().contains("vlc"))
+            .unwrap_or(false)
+        {
+            PlayerKind::Vlc
+        } else if exe
+            .file_name()
+            .map(|n| n.to_string_lossy().to_ascii_lowercase().contains("mpv"))
+            .unwrap_or(false)
+        {
+            PlayerKind::Mpv
+        } else {
+            PlayerKind::OsDefault
+        };
+        return Player {
+            kind,
+            exe: Some(exe),
+        };
+    }
+    if let Some(exe) = vlc {
+        return Player {
+            kind: PlayerKind::Vlc,
+            exe: Some(exe),
+        };
+    }
+    if let Some(exe) = mpv {
+        return Player {
+            kind: PlayerKind::Mpv,
+            exe: Some(exe),
+        };
+    }
+    Player {
+        kind: PlayerKind::OsDefault,
+        exe: None,
+    }
+}
+
+impl Player {
+    /// Discovery order: `MAGPIECRAFT_PLAYER`, then VLC, then mpv, then the shell.
+    pub fn detect() -> Self {
+        let explicit = std::env::var_os(ENV_PLAYER)
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+            .and_then(|p| {
+                if p.is_file() {
+                    Some(p)
+                } else {
+                    which(&p.to_string_lossy())
+                }
+            });
+        let vlc = which("vlc")
+            .or_else(|| {
+                let p = PathBuf::from("C:/Program Files/VideoLAN/VLC/vlc.exe");
+                p.is_file().then_some(p)
+            })
+            .or_else(|| {
+                let p = PathBuf::from("C:/Program Files (x86)/VideoLAN/VLC/vlc.exe");
+                p.is_file().then_some(p)
+            });
+        let mpv = which("mpv")
+            .or_else(|| {
+                let p = PathBuf::from("C:/Program Files/mpv/mpv.exe");
+                p.is_file().then_some(p)
+            })
+            .or_else(|| {
+                let p = PathBuf::from("C:/Program Files/Mpv/mpv.exe");
+                p.is_file().then_some(p)
+            });
+        choose_player(explicit, vlc, mpv)
+    }
+}
+
+/// Args for one launch. `path` is the media file; `start` is where to resume.
+///
+/// VLC takes `--start-time=<seconds>` after the file, mpv takes `--start=<seconds>`
+/// after the file, and the OS default is launched through the shell.
+pub fn player_args(player: &Player, path: &Path, start_secs: Option<u64>) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    match player.kind {
+        PlayerKind::Vlc => {
+            args.push(path.display().to_string());
+            args.push("--started-from-file".to_string());
+            if let Some(secs) = start_secs.filter(|s| *s > 0) {
+                args.push(format!("--start-time={secs}"));
+            }
+        }
+        PlayerKind::Mpv => {
+            args.push(path.display().to_string());
+            if let Some(secs) = start_secs.filter(|s| *s > 0) {
+                args.push(format!("--start={secs}"));
+            }
+        }
+        PlayerKind::OsDefault => {
+            args.push("/C".to_string());
+            args.push("start".to_string());
+            args.push(String::new());
+            args.push(path.display().to_string());
+        }
+    }
+    args
+}
+
+/// Launch the player detached: MagpieCraft must not wait for a film to finish.
+pub fn launch(player: &Player, path: &Path, start_secs: Option<u64>) -> ToolResult<()> {
+    if !path.is_file() {
+        return Err(ToolError::Missing(format!(
+            "{} is not a file",
+            path.display()
+        )));
+    }
+    let args = player_args(player, path, start_secs);
+    let mut cmd = match (&player.kind, &player.exe) {
+        (PlayerKind::OsDefault, _) => {
+            #[cfg(windows)]
+            {
+                Command::new("cmd")
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let mut c = Command::new("open");
+                c.arg(path);
+                c.stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                return c
+                    .spawn()
+                    .map(|_| ())
+                    .map_err(|e| ToolError::Failed("open".to_string(), e.to_string()));
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                let mut c = Command::new("xdg-open");
+                c.arg(path);
+                c.stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                return c
+                    .spawn()
+                    .map(|_| ())
+                    .map_err(|e| ToolError::Failed("xdg-open".to_string(), e.to_string()));
+            }
+        }
+        (_, Some(exe)) => Command::new(exe),
+        (_, None) => return Err(ToolError::Missing("no player configured".to_string())),
+    };
+    let label = player
+        .exe
+        .as_ref()
+        .map(|e| e.display().to_string())
+        .unwrap_or_else(|| player.kind.label().to_string());
+    cmd.args(&args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // A new process group, so the player survives MagpieCraft exiting.
+        cmd.creation_flags(0x0000_0200);
+    }
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|e| ToolError::Failed(label, e.to_string()))
+}
+
+/// Seconds as `h:mm:ss` or `m:ss`, for progress lines.
+pub fn format_secs(secs: u64) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
 }
 
 // ---------------------------------------------------------------- ffprobe
@@ -425,5 +642,89 @@ mod tests {
     #[test]
     fn which_does_not_invent_paths() {
         assert!(which("magpiecraft-surely-not-a-real-binary").is_none());
+    }
+
+    #[test]
+    fn player_precedence_is_explicit_then_vlc_then_mpv_then_shell() {
+        let vlc = PathBuf::from("C:/VLC/vlc.exe");
+        let mpv = PathBuf::from("C:/mpv/mpv.exe");
+        let explicit = PathBuf::from("D:/tools/vlc.exe");
+        assert_eq!(
+            choose_player(Some(explicit.clone()), Some(vlc.clone()), Some(mpv.clone())),
+            Player {
+                kind: PlayerKind::Vlc,
+                exe: Some(explicit)
+            }
+        );
+        assert_eq!(
+            choose_player(None, Some(vlc.clone()), Some(mpv.clone())),
+            Player {
+                kind: PlayerKind::Vlc,
+                exe: Some(vlc)
+            }
+        );
+        assert_eq!(
+            choose_player(None, None, Some(mpv.clone())),
+            Player {
+                kind: PlayerKind::Mpv,
+                exe: Some(mpv)
+            }
+        );
+        assert_eq!(
+            choose_player(None, None, None),
+            Player {
+                kind: PlayerKind::OsDefault,
+                exe: None
+            }
+        );
+    }
+
+    #[test]
+    fn launch_arguments_keep_the_resume_position() {
+        let file = PathBuf::from("D:/films/Alien (1979).mkv");
+        let vlc = Player {
+            kind: PlayerKind::Vlc,
+            exe: Some(PathBuf::from("C:/VLC/vlc.exe")),
+        };
+        let args = player_args(&vlc, &file, Some(754));
+        assert_eq!(args[0], "D:/films/Alien (1979).mkv");
+        assert!(args.contains(&"--start-time=754".to_string()));
+        // Zero means "from the beginning": no flag, no chance of confusing a player.
+        assert!(!player_args(&vlc, &file, Some(0))
+            .iter()
+            .any(|a| a.starts_with("--start-time")));
+        let mpv = Player {
+            kind: PlayerKind::Mpv,
+            exe: Some(PathBuf::from("C:/mpv/mpv.exe")),
+        };
+        assert!(player_args(&mpv, &file, Some(90)).contains(&"--start=90".to_string()));
+        let shell = Player {
+            kind: PlayerKind::OsDefault,
+            exe: None,
+        };
+        let shell_args = player_args(&shell, &file, Some(10));
+        assert_eq!(shell_args.first().map(String::as_str), Some("/C"));
+        assert_eq!(
+            shell_args.last().map(String::as_str),
+            Some("D:/films/Alien (1979).mkv")
+        );
+    }
+
+    #[test]
+    fn seconds_are_readable() {
+        assert_eq!(format_secs(0), "0:00");
+        assert_eq!(format_secs(59), "0:59");
+        assert_eq!(format_secs(754), "12:34");
+        assert_eq!(format_secs(3600), "1:00:00");
+        assert_eq!(format_secs(5421), "1:30:21");
+    }
+
+    #[test]
+    fn launching_something_that_does_not_exist_is_an_error() {
+        let player = Player {
+            kind: PlayerKind::OsDefault,
+            exe: None,
+        };
+        assert!(launch(&player, Path::new("Z:/nope.mkv"), None).is_err());
     }
 }
