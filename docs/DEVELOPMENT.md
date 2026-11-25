@@ -25,7 +25,7 @@ cargo test --workspace
 cargo run -q -p magpiecraft-app -- --smoke
 ```
 
-Expected: 146 tests pass (2026-11-24), clippy clean with the deny gates, fmt clean.
+Expected: 152 tests pass (2026-11-25), clippy clean with the deny gates, fmt clean.
 
 Probe the MCP surface after any change to tools or the command bus:
 

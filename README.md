@@ -54,9 +54,10 @@ collection, so no copyrighted page is published. How to reproduce them: `docs/DE
 - **Proposes renames you can read before they happen**, kind-aware: films by title and year, episodes by
   series and SxxExx, comics by series and volume. Books and music are left to Calibre, BookCraft and
   your tagger, and say so. Every applied plan is journalled and reversible.
-
-Playback is not here, on purpose: films and music open in mpv, Jellyfin or the OS, and books in
-BookCraft or your reader.
+- **Opens what it cannot show in itself.** A click on a film or a track launches your player with the
+  file and the position it left off at (VLC or mpv, overridable), and "continue" then lists it next to
+  your comics with the time watched. Books and photos go to the OS handler. MagpieCraft never decodes
+  media itself; playback is a hand-off, not a built-in engine (decision D8).
 
 The behavioural oracle for the grid and the reader is the browser prototype Sandra uses
 (`heavymetal-site/magpie_proto.py`). `docs/READER_PARITY.md` lists every scenario and whether the Rust
@@ -126,6 +127,8 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Reader: single page, spread with cover alone, half page, RTL, page jump, offset | Implemented |
 | Reader: CBR/RAR and PDF pages (7-Zip and PdfCraft) | Implemented |
 | Reader: prefetch and decode off the UI thread | Implemented |
+| Open with player: resume position, player discovery, continue row for films | Implemented |
+| Built-in decoder, subtitle rendering, transcoding, streaming server | Not built, by decision D8 |
 | Ctrl + wheel zoom, dark and light high-contrast themes | Implemented |
 | CLI with `--json` | Implemented |
 | MCP stdio server: `media_catalog`, `media_search`, `media_read`, `media_health` | Implemented |
@@ -207,7 +210,7 @@ Nothing is ever written into a library. Covers, caches and manifests live here.
 
 Measured 2026-11-24 on the Tier 2 commit:
 
-- `cargo test --workspace`: **146 passed**, 0 failed
+- `cargo test --workspace`: **152 passed**, 0 failed
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean
   (`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented` denied workspace-wide)
 - `cargo fmt --all --check`: clean

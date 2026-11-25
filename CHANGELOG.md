@@ -2,6 +2,27 @@
 
 All notable changes to MagpieCraft. Newest first. Dates are the day the work landed.
 
+## 0.4.0 - 2026-11-25 (Open with player, decision D8)
+
+Playback is a hand-off, not a dead end.
+
+Added:
+
+- `open <key>` (CLI, MCP `media_read open`, and a click on a film card in the app) launches the
+  configured player with the file and the position it left off at. VLC first (`--start-time`), then mpv
+  (`--start`), then the OS handler; `MAGPIECRAFT_PLAYER` overrides discovery. The player is spawned
+  detached in its own process group, so it outlives MagpieCraft.
+- Films and tracks resume in seconds: schema 5 adds `progress.position_secs` and `duration_secs` and an
+  `items.duration_secs` cache filled once by ffprobe. "Continue" lists a film and a comic in one row,
+  in the right units (`1:30 / 1:44:28` versus `p.7/220`), and `open` records the attempt before
+  launching so a missing player does not lose the film from the queue.
+- Comics are refused with a reason ("comics are read in the reader, not handed to a player").
+- Pure, tested pieces: `choose_player` precedence, `player_args` per player (including "zero means no
+  flag"), and `format_secs`.
+
+Still out, by the same decision: a built-in decoder, subtitle rendering, transcoding, and any streaming
+server. 152 tests.
+
 ## 0.3.0 - 2026-11-24 (Tier 2: every kind, not just comics)
 
 The catalogue is a collection-wide index. Comics are one module of it.

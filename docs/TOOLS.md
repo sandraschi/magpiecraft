@@ -20,6 +20,7 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `item <key>` | One item with page count, series, volume, direction, progress |
 | `pages <key>` | Page count, readable flag, first page names, offset, direction |
 | `page <key> <n> --out path` | Write one page to a file, byte for byte; never into the library |
+| `open <key>` | Open a film, track, book or photo in the player or OS handler, resuming where it left off |
 | `offset <key> <n>` | Set the printed-page offset (scan page minus printed page) |
 | `rtl <key> [--on\|--off]` | Set or clear the reading direction of one item |
 | `progress <key>` / `progress <key> --set N [--of N] [--finished]` | Read or write reading progress |
@@ -99,6 +100,7 @@ go to stderr. Five compound tools, all read-first except the explicitly confirme
 | `progress_get` | `key` | Last page and total |
 | `progress_set` | `key`, `page`, `total`, `finished` | Saved progress |
 | `page_export` | `key`, `page`, `out` | Writes one page to a file and returns its path and size |
+| `open` | `key` | Launches the player or OS handler with the file and the resume position. The one read tool with a visible side effect: it starts a program on the user's own desktop |
 
 ### `media_curate`
 

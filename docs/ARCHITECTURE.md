@@ -202,6 +202,30 @@ Naming presets follow the kind: comics and manga by series and volume, films by 
 episodes by series folder and SxxExx. Books, music and photos are left alone with a reason, because
 their owning app or their tags know better than a file name does.
 
+## Playback is a hand-off, not a decoder (D8)
+
+MagpieCraft does not decode video or audio. `open <key>` launches a real player with the file and the
+position it left off at:
+
+| Player | Discovery | Resume argument |
+|---|---|---|
+| VLC | `MAGPIECRAFT_PLAYER`, then `vlc` on PATH, then `C:\Program Files\VideoLAN\VLC\vlc.exe` | `--start-time=<seconds>` |
+| mpv | `MAGPIECRAFT_PLAYER`, then `mpv` on PATH, then `C:\Program Files\mpv\mpv.exe` | `--start=<seconds>` |
+| OS handler | when neither is installed | `cmd /C start "" <file>` (or `open`/`xdg-open`) |
+
+Why not decode in-process: linking ffmpeg or libmpv puts LGPL/GPL inside an MIT/Apache workspace, and
+the fleet rule is "invoke external tools, never link them". Seek, HDR, audio passthrough and hardware
+decode are what mpv and VLC already are; a craft app that reimplements them badly is worse than one
+that launches them well. A streaming server is HomeServeCraft's job, not this repo's.
+
+What the app does own: the duration (probed once with ffprobe and cached on the item), the position
+(seconds, in the same `progress` table as comic pages), and the continue row, which lists a film and a
+comic in one place with the right units. `open` records the attempt before launching, so a film still
+appears in continue if the player is missing.
+
+Optional later: mpv embedded with `--wid` plus its JSON IPC, which plays inside the MagpieCraft window
+while still being an external player. It needs a test machine with mpv installed.
+
 ## Why no ports
 
 The desktop app calls the engine in process. The MCP server speaks stdio. There is no localhost HTTP
