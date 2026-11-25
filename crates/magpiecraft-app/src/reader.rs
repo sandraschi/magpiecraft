@@ -8,7 +8,7 @@
 //! Decoding happens on a worker thread. The UI thread only uploads textures and
 //! paints: a 400-page archive costs nothing until a page is on screen.
 
-use crate::theme;
+use crate::skins::SkinPalette;
 use magpiecraft_core::images;
 use magpiecraft_core::{Catalog, FitMode, PageSet, Reader, ReaderSettings};
 use std::collections::{HashMap, HashSet};
@@ -218,12 +218,14 @@ impl ReaderView {
         ui: &mut egui::Ui,
         catalog: &mut Catalog,
         viewport: egui::Rect,
+        palette: &SkinPalette,
     ) -> Action {
         let mut action = Action::None;
         if let Some(loader) = self.loader.as_mut() {
             loader.poll(ui.ctx());
         }
-        self.toolbar(ui, catalog, &mut action);
+        self.toolbar(ui, catalog, palette, &mut action);
+        self.progress_bar(ui, palette);
 
         if let Some(error) = self.error.clone() {
             ui.vertical_centered(|ui| {
@@ -232,7 +234,7 @@ impl ReaderView {
                 if self.count > 0 {
                     ui.label(
                         egui::RichText::new(format!("{} pages are indexed", self.count))
-                            .color(theme::dim_text(ui)),
+                            .color(palette.text_dim),
                     );
                 }
             });
@@ -282,7 +284,7 @@ impl ReaderView {
                 egui::vec2(column, canvas.height()),
             );
             x += column + gap;
-            self.draw_slot(ui, slot, slot_rect);
+            self.draw_slot(ui, slot, slot_rect, palette);
         }
 
         // Save progress when the position actually changed.
@@ -301,20 +303,38 @@ impl ReaderView {
         action
     }
 
+    /// Thin progress bar under the toolbar: page fraction in the accent colour.
+    fn progress_bar(&self, ui: &mut egui::Ui, palette: &SkinPalette) {
+        if self.count == 0 {
+            return;
+        }
+        let width = ui.available_width().max(40.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 3.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 0.0, palette.border);
+        let fraction = (self.reader.page() as f32 / self.count as f32).clamp(0.0, 1.0);
+        if fraction > 0.0 {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * fraction, 3.0)),
+                0.0,
+                palette.accent,
+            );
+        }
+    }
+
     fn keyboard_hook(&mut self, ui: &egui::Ui, catalog: &mut Catalog) {
         if self.keyboard(ui, catalog) {
             self.escape_requested = true;
         }
     }
 
-    fn draw_slot(&self, ui: &egui::Ui, slot: &magpiecraft_core::Slot, rect: egui::Rect) {
-        let dark = ui.visuals().dark_mode;
-        let back = if dark {
-            theme::DARK_CANVAS
-        } else {
-            theme::LIGHT_CANVAS
-        };
-        ui.painter().rect_filled(rect, 2.0, back);
+    fn draw_slot(
+        &self,
+        ui: &egui::Ui,
+        slot: &magpiecraft_core::Slot,
+        rect: egui::Rect,
+        palette: &SkinPalette,
+    ) {
+        ui.painter().rect_filled(rect, 2.0, palette.canvas);
         let loader = match self.loader.as_ref() {
             Some(l) => l,
             None => return,
@@ -355,13 +375,19 @@ impl ReaderView {
                     egui::Align2::CENTER_CENTER,
                     message,
                     egui::FontId::proportional(15.0),
-                    theme::dim_text(ui),
+                    palette.text_dim,
                 );
             }
         }
     }
 
-    fn toolbar(&mut self, ui: &mut egui::Ui, catalog: &mut Catalog, action: &mut Action) {
+    fn toolbar(
+        &mut self,
+        ui: &mut egui::Ui,
+        catalog: &mut Catalog,
+        palette: &SkinPalette,
+        action: &mut Action,
+    ) {
         let mut s = self.settings_snapshot();
         let mut changed = false;
         let mut rtl_changed = false;
@@ -483,7 +509,7 @@ impl ReaderView {
             }
         }
         if !self.status.is_empty() {
-            ui.label(egui::RichText::new(&self.status).color(theme::ACCENT));
+            ui.label(egui::RichText::new(&self.status).color(palette.accent));
         }
     }
 

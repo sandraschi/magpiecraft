@@ -8,6 +8,7 @@ mod app;
 mod covers;
 mod library;
 mod reader;
+mod skins;
 mod theme;
 
 use clap::Parser;

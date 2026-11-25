@@ -5,7 +5,8 @@
 //! library with 12,000 items opens as fast as one with twelve.
 
 use crate::covers::CoverCache;
-use crate::theme;
+use crate::skins::SkinPalette;
+use egui::Color32;
 use magpiecraft_core::{BrowseView, Catalog, SearchView};
 use serde_json::Value;
 
@@ -75,9 +76,10 @@ pub fn show(
     state: &mut BrowseState,
     covers: &mut CoverCache,
     catalog: &mut Catalog,
+    palette: &SkinPalette,
 ) -> Nav {
     let mut nav = Nav::None;
-    crumbs(ui, state, &mut nav);
+    crumbs(ui, state, palette, &mut nav);
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
@@ -97,12 +99,12 @@ pub fn show(
     ui.add_space(6.0);
 
     if let Some(search) = state.search.clone() {
-        search_results(ui, &search, covers, catalog, &mut nav);
+        search_results(ui, &search, covers, catalog, palette, &mut nav);
         return nav;
     }
 
     if state.browse.crumbs.len() <= 1 && !state.continue_row.is_empty() {
-        section(ui, "Continue reading");
+        section(ui, palette, "Continue reading");
         ui.horizontal_wrapped(|ui| {
             let entries = state.continue_row.clone();
             for entry in &entries {
@@ -112,9 +114,15 @@ pub fn show(
                     let label_text = entry.get("label").and_then(Value::as_str).unwrap_or("");
                     let kind = entry.get("kind").and_then(Value::as_str).unwrap_or("other");
                     let comicish = matches!(kind, "comics" | "manga" | "magazines");
-                    cover(ui, width, key, covers, catalog, None);
+                    let face = if comicish {
+                        CoverFace::Page(Some(palette.kind_color_by_name(kind)))
+                    } else {
+                        CoverFace::Label(kind)
+                    };
+                    cover(ui, width, key, covers, catalog, palette, face);
                     let label = format!("{title}  {label_text}");
-                    if card_label(ui, &label, kind).clicked() {
+                    let sub_kind = magpiecraft_core::MediaKind::parse(kind);
+                    if card_label(ui, &label, kind, sub_kind, palette).clicked() {
                         nav = if comicish {
                             Nav::Read(key.to_string())
                         } else {
@@ -135,13 +143,25 @@ pub fn show(
             .filter(|f| state.matches(&f.name))
             .cloned()
             .collect();
-        section(ui, &format!("Folders ({})", state.browse.folders.len()));
+        section(
+            ui,
+            palette,
+            &format!("Folders ({})", state.browse.folders.len()),
+        );
         ui.horizontal_wrapped(|ui| {
             for folder in &visible {
                 with_card(ui, |ui, width| {
                     match &folder.cover_key {
-                        Some(cover_key) => cover(ui, width, cover_key, covers, catalog, None),
-                        None => placeholder(ui, width),
+                        Some(cover_key) => cover(
+                            ui,
+                            width,
+                            cover_key,
+                            covers,
+                            catalog,
+                            palette,
+                            CoverFace::Page(None),
+                        ),
+                        None => placeholder(ui, width, palette),
                     }
                     let label = folder.name.clone();
                     let sub = if folder.items == 1 {
@@ -149,7 +169,7 @@ pub fn show(
                     } else {
                         format!("{} volumes", folder.items)
                     };
-                    if card_label(ui, &label, &sub).clicked() {
+                    if card_label(ui, &label, &sub, None, palette).clicked() {
                         nav = Nav::Open(Some(folder.key.clone()));
                     }
                 });
@@ -167,6 +187,7 @@ pub fn show(
             .collect();
         section(
             ui,
+            palette,
             &items_heading(state.browse.kind, state.browse.items.len()),
         );
         ui.horizontal_wrapped(|ui| {
@@ -179,7 +200,15 @@ pub fn show(
                 );
                 with_card(ui, |ui, width| {
                     if comicish {
-                        cover(ui, width, &item.key, covers, catalog, None);
+                        cover(
+                            ui,
+                            width,
+                            &item.key,
+                            covers,
+                            catalog,
+                            palette,
+                            CoverFace::Page(Some(palette.kind_color(item.kind))),
+                        );
                     } else {
                         // A film or a book has no page to use as a cover, so the card
                         // says what it is instead of asking for an image that cannot exist.
@@ -189,11 +218,12 @@ pub fn show(
                             &item.key,
                             covers,
                             catalog,
-                            Some(item.kind.as_str()),
+                            palette,
+                            CoverFace::Label(item.kind.as_str()),
                         );
                     }
                     let sub = item_subtitle(item);
-                    if card_label(ui, &item.title, &sub).clicked() {
+                    if card_label(ui, &item.title, &sub, Some(item.kind), palette).clicked() {
                         nav = if item.kind.is_comicish() {
                             Nav::Read(item.key.clone())
                         } else {
@@ -207,13 +237,13 @@ pub fn show(
 
     if state.browse.folders.is_empty() && state.browse.items.is_empty() {
         ui.add_space(16.0);
-        ui.label(egui::RichText::new("Nothing readable here.").color(theme::dim_text(ui)));
+        ui.label(egui::RichText::new("Nothing readable here.").color(palette.text_dim));
         if state.browse.crumbs.len() <= 1 {
             ui.label(
                 egui::RichText::new(
                     "Add a library folder in File > Add library..., then run File > Scan all libraries.",
                 )
-                .color(theme::dim_text(ui)),
+                .color(palette.text_dim),
             );
         }
     }
@@ -250,12 +280,20 @@ fn item_subtitle(item: &magpiecraft_core::ItemView) -> String {
     parts.join("  ")
 }
 
-fn section(ui: &mut egui::Ui, title: &str) {
+fn section(ui: &mut egui::Ui, palette: &SkinPalette, title: &str) {
     ui.add_space(6.0);
     ui.label(
         egui::RichText::new(title.to_uppercase())
-            .size(13.0)
-            .color(theme::dim_text(ui)),
+            .size(14.0)
+            .strong()
+            .color(palette.text_dim),
+    );
+    let width = ui.available_width().max(40.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 3.0), egui::Sense::hover());
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(rect.min, egui::vec2(rect.width().min(220.0), 1.0)),
+        0.0,
+        palette.border,
     );
     ui.add_space(2.0);
 }
@@ -275,7 +313,7 @@ fn items_heading(kind: Option<magpiecraft_core::MediaKind>, count: usize) -> Str
     format!("{noun} ({count})")
 }
 
-fn crumbs(ui: &mut egui::Ui, state: &mut BrowseState, nav: &mut Nav) {
+fn crumbs(ui: &mut egui::Ui, state: &mut BrowseState, palette: &SkinPalette, nav: &mut Nav) {
     let crumbs = state.browse.crumbs.clone();
     ui.horizontal_wrapped(|ui| {
         for (i, crumb) in crumbs.iter().enumerate() {
@@ -286,25 +324,37 @@ fn crumbs(ui: &mut egui::Ui, state: &mut BrowseState, nav: &mut Nav) {
                 *nav = Nav::Open(crumb.key.clone());
             }
             if !last {
-                ui.label(egui::RichText::new("/").color(theme::dim_text(ui)));
+                ui.label(egui::RichText::new("/").color(palette.text_dim));
             }
         }
         if let Some(kind) = state.browse.kind {
             ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(kind.as_str())
-                    .size(12.0)
-                    .color(theme::ACCENT),
-            );
+            kind_chip(ui, palette, kind.as_str(), Some(kind));
         }
         if state.browse.mature {
             ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new("mature")
-                    .size(12.0)
-                    .color(theme::ACCENT),
-            );
+            kind_chip(ui, palette, "mature", None);
         }
+    });
+}
+
+/// A small kind tag: coloured dot plus dim text. The colour carries the meaning,
+/// so the text never has to.
+fn kind_chip(
+    ui: &mut egui::Ui,
+    palette: &SkinPalette,
+    text: &str,
+    kind: Option<magpiecraft_core::MediaKind>,
+) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+        let color = match kind {
+            Some(k) => palette.kind_color(k),
+            None => palette.accent,
+        };
+        ui.painter().circle_filled(rect.center(), 4.0, color);
+        ui.label(egui::RichText::new(text).size(12.0).color(palette.text_dim));
     });
 }
 
@@ -319,30 +369,51 @@ fn with_card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui, f32)) {
     ui.add_space(CARD_GAP - 12.0);
 }
 
+/// What a cover card shows when there is no texture yet. A page container gets an
+/// optional kind stripe; anything else gets a text label, because a film has no
+/// page to use as a cover.
+enum CoverFace<'a> {
+    Page(Option<Color32>),
+    Label(&'a str),
+}
+
 fn cover(
     ui: &mut egui::Ui,
     width: f32,
     key: &str,
     covers: &mut CoverCache,
     catalog: &mut Catalog,
-    fallback: Option<&str>,
+    palette: &SkinPalette,
+    face: CoverFace<'_>,
 ) {
     let height = width * 1.5;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-    let dark = ui.visuals().dark_mode;
-    let bg = if dark {
-        theme::DARK_CARD
+    // Drop shadow: a soft dark rect peeking out below and right.
+    let shadow_color = if palette.is_light {
+        Color32::from_rgba_unmultiplied(60, 50, 40, 70)
     } else {
-        theme::LIGHT_CARD
+        Color32::from_rgba_unmultiplied(0, 0, 0, 150)
     };
-    ui.painter().rect_filled(rect, 3.0, bg);
-    if let Some(label) = fallback {
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left(), rect.top() + 3.0),
+            egui::vec2(rect.width(), rect.height()),
+        ),
+        3.0,
+        shadow_color,
+    );
+    ui.painter().rect_filled(rect, 3.0, palette.card);
+    let (label, stripe) = match face {
+        CoverFace::Page(stripe) => (None, stripe),
+        CoverFace::Label(label) => (Some(label), None),
+    };
+    if let Some(label) = label {
         // Not a page container: say what it is rather than asking for a cover that
         // cannot exist (a film, a book, a track).
         ui.painter().rect_stroke(
             rect,
             3.0,
-            egui::Stroke::new(1.0, theme::dim_text(ui)),
+            egui::Stroke::new(1.0, palette.text_dim),
             egui::StrokeKind::Inside,
         );
         ui.painter().text(
@@ -350,7 +421,7 @@ fn cover(
             egui::Align2::CENTER_CENTER,
             label,
             egui::FontId::proportional(13.0),
-            theme::dim_text(ui),
+            palette.text_dim,
         );
         return;
     }
@@ -366,6 +437,13 @@ fn cover(
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
+            if let Some(colour) = stripe {
+                ui.painter_at(rect).rect_filled(
+                    egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 4.0)),
+                    0.0,
+                    colour,
+                );
+            }
             return;
         }
     }
@@ -375,14 +453,14 @@ fn cover(
             egui::Align2::CENTER_CENTER,
             "no cover",
             egui::FontId::proportional(12.0),
-            theme::dim_text(ui),
+            palette.text_dim,
         );
         return;
     }
     if let Ok(source) = catalog.cover_source(key) {
         covers.request(key, source);
     } else {
-        placeholder_paint(ui, rect);
+        placeholder_paint(ui, palette, rect);
         return;
     }
     ui.painter().text(
@@ -390,26 +468,20 @@ fn cover(
         egui::Align2::CENTER_CENTER,
         "...",
         egui::FontId::proportional(18.0),
-        theme::dim_text(ui),
+        palette.text_dim,
     );
 }
 
-fn placeholder(ui: &mut egui::Ui, width: f32) {
+fn placeholder(ui: &mut egui::Ui, width: f32, palette: &SkinPalette) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, width * 1.5), egui::Sense::hover());
-    placeholder_paint(ui, rect);
+    placeholder_paint(ui, palette, rect);
 }
 
-fn placeholder_paint(ui: &egui::Ui, rect: egui::Rect) {
-    let dark = ui.visuals().dark_mode;
-    let line = if dark {
-        theme::DARK_LINE
-    } else {
-        theme::LIGHT_LINE
-    };
+fn placeholder_paint(ui: &egui::Ui, palette: &SkinPalette, rect: egui::Rect) {
     ui.painter().rect_stroke(
         rect,
         3.0,
-        egui::Stroke::new(1.0, line),
+        egui::Stroke::new(1.0, palette.border),
         egui::StrokeKind::Inside,
     );
     ui.painter().text(
@@ -417,11 +489,17 @@ fn placeholder_paint(ui: &egui::Ui, rect: egui::Rect) {
         egui::Align2::CENTER_CENTER,
         "folder",
         egui::FontId::proportional(12.0),
-        theme::dim_text(ui),
+        palette.text_dim,
     );
 }
 
-fn card_label(ui: &mut egui::Ui, title: &str, sub: &str) -> egui::Response {
+fn card_label(
+    ui: &mut egui::Ui,
+    title: &str,
+    sub: &str,
+    kind: Option<magpiecraft_core::MediaKind>,
+    palette: &SkinPalette,
+) -> egui::Response {
     ui.add_space(3.0);
     // Two lines are reserved for the title so the subtitle lines up across a row.
     let width = ui.available_width().max(40.0);
@@ -438,11 +516,20 @@ fn card_label(ui: &mut egui::Ui, title: &str, sub: &str) -> egui::Response {
             },
         )
         .inner;
-    ui.label(
-        egui::RichText::new(sub)
-            .size(11.5)
-            .color(theme::dim_text(ui)),
-    );
+    match kind {
+        Some(k) => {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                ui.painter()
+                    .circle_filled(dot.center(), 3.5, palette.kind_color(k));
+                ui.label(egui::RichText::new(sub).size(11.5).color(palette.text_dim));
+            });
+        }
+        None => {
+            ui.label(egui::RichText::new(sub).size(11.5).color(palette.text_dim));
+        }
+    }
     title_response
 }
 
@@ -451,10 +538,12 @@ fn search_results(
     search: &SearchView,
     covers: &mut CoverCache,
     catalog: &mut Catalog,
+    palette: &SkinPalette,
     nav: &mut Nav,
 ) {
     section(
         ui,
+        palette,
         &format!(
             "{} result{}{} via {}",
             search.count,
@@ -466,13 +555,21 @@ fn search_results(
     ui.horizontal_wrapped(|ui| {
         for hit in &search.hits {
             with_card(ui, |ui, width| {
-                cover(ui, width, &hit.key, covers, catalog, None);
+                cover(
+                    ui,
+                    width,
+                    &hit.key,
+                    covers,
+                    catalog,
+                    palette,
+                    CoverFace::Page(None),
+                );
                 let library = if hit.where_.is_empty() {
                     hit.library.clone()
                 } else {
                     format!("{} / {}", hit.library, hit.where_)
                 };
-                if card_label(ui, &hit.title, &library).clicked() {
+                if card_label(ui, &hit.title, &library, None, palette).clicked() {
                     *nav = Nav::Read(hit.key.clone());
                 }
             });
@@ -481,7 +578,7 @@ fn search_results(
     if search.count == 0 {
         ui.label(
             egui::RichText::new("No matches. Try fewer words, or the substring mode.")
-                .color(theme::dim_text(ui)),
+                .color(palette.text_dim),
         );
     }
 }

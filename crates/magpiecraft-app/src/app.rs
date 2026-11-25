@@ -9,6 +9,7 @@
 use crate::covers::CoverCache;
 use crate::library::{self, BrowseState, Nav};
 use crate::reader::{Action, ReaderView};
+use crate::skins::{SkinId, SkinPalette};
 use crate::theme;
 use magpiecraft_core::{Catalog, MediaKind, Paths, Settings, StatsView};
 use std::sync::mpsc::{channel, Receiver};
@@ -41,7 +42,7 @@ enum Act {
     ScanAll,
     ScanThis,
     ScanFull,
-    Theme,
+    Skin(SkinId),
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -74,9 +75,8 @@ pub struct MagpieApp {
     reader: Option<ReaderView>,
     stats: Option<StatsView>,
     status: String,
-    dark: bool,
+    skin: SkinId,
     zoom: f32,
-    applied_theme: Option<bool>,
     dialog: Dialog,
     palette_filter: String,
     new_name: String,
@@ -131,9 +131,9 @@ impl MagpieApp {
     ) -> Self {
         theme::apply_text_styles(&cc.egui_ctx);
         let settings = catalog.settings().clone();
-        let dark = settings.theme != "light";
+        let skin = SkinId::parse(&settings.skin).unwrap_or_default();
         let zoom = settings.zoom.clamp(0.6, 2.5);
-        cc.egui_ctx.set_visuals(theme::visuals(dark));
+        cc.egui_ctx.set_visuals(theme::visuals(&skin.palette()));
         cc.egui_ctx.set_zoom_factor(zoom);
         let mut app = MagpieApp {
             settings,
@@ -149,9 +149,8 @@ impl MagpieApp {
             reader: None,
             stats: None,
             status: String::new(),
-            dark,
+            skin,
             zoom,
-            applied_theme: Some(dark),
             dialog: Dialog::None,
             palette_filter: String::new(),
             new_name: String::new(),
@@ -187,6 +186,16 @@ impl MagpieApp {
             }
         }
         app
+    }
+
+    fn palette(&self) -> SkinPalette {
+        self.skin.palette()
+    }
+
+    fn set_skin(&mut self, skin: SkinId) {
+        self.skin = skin;
+        self.settings.skin = skin.id().to_string();
+        self.save_settings();
     }
 
     fn refresh(&mut self) {
@@ -243,12 +252,7 @@ impl MagpieApp {
                 Act::ScanAll => self.start_scan(None, false),
                 Act::ScanThis => self.start_scan(self.browse.browse.library.clone(), false),
                 Act::ScanFull => self.start_scan(None, true),
-                Act::Theme => {
-                    self.dark = !self.dark;
-                    self.settings.theme = if self.dark { "dark" } else { "light" }.to_string();
-                    self.applied_theme = None;
-                    self.save_settings();
-                }
+                Act::Skin(skin) => self.set_skin(skin),
                 Act::ZoomIn => self.set_zoom(ctx, self.zoom * 1.1),
                 Act::ZoomOut => self.set_zoom(ctx, self.zoom / 1.1),
                 Act::ZoomReset => self.set_zoom(ctx, 1.0),
@@ -424,10 +428,15 @@ impl MagpieApp {
                 }
             });
             ui.menu_button("View", |ui| {
-                if ui.button("Toggle light / dark").clicked() {
-                    actions.push(Act::Theme);
-                    ui.close();
-                }
+                ui.menu_button("Skin", |ui| {
+                    for skin in SkinId::ALL {
+                        let mut checked = self.skin == skin;
+                        if ui.checkbox(&mut checked, skin.label()).changed() {
+                            actions.push(Act::Skin(skin));
+                            ui.close();
+                        }
+                    }
+                });
                 ui.separator();
                 if ui.button("Zoom in (Ctrl +)").clicked() {
                     actions.push(Act::ZoomIn);
@@ -542,6 +551,7 @@ impl MagpieApp {
     }
 
     fn search_row(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
         ui.horizontal(|ui| {
             ui.label("Search whole collection");
             let response = ui.add(
@@ -565,12 +575,13 @@ impl MagpieApp {
             }
             if !self.status.is_empty() {
                 ui.separator();
-                ui.label(egui::RichText::new(self.status.clone()).color(theme::ACCENT));
+                ui.label(egui::RichText::new(self.status.clone()).color(palette.accent));
             }
         });
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
         ui.horizontal(|ui| {
             let items = self.stats.as_ref().map(|s| s.items).unwrap_or(0);
             let libraries = self.stats.as_ref().map(|s| s.libraries).unwrap_or(0);
@@ -591,7 +602,7 @@ impl MagpieApp {
             ui.label(format!("zoom {:.0}%", self.zoom * 100.0));
             if self.scan_rx.is_some() {
                 ui.separator();
-                ui.label(egui::RichText::new("scanning...").color(theme::ACCENT));
+                ui.label(egui::RichText::new("scanning...").color(palette.accent));
             }
             if let Some(browse) = self.browse.browse.library.clone() {
                 ui.separator();
@@ -645,8 +656,9 @@ impl MagpieApp {
     }
 
     fn organise_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
+        let palette = self.palette();
         let view = self.organise.clone().unwrap_or_default();
-        theme::card(ui, Some(theme::ACCENT), |ui| {
+        theme::card(ui, &palette, Some(palette.accent), |ui| {
             ui.label(egui::RichText::new("Organise").size(19.0).strong());
             ui.label(
                 "Renaming is a plan: you read the diff, then apply it. Every applied plan is journalled \
@@ -671,13 +683,13 @@ impl MagpieApp {
                 );
             });
             if !view.message.is_empty() {
-                ui.label(egui::RichText::new(&view.message).color(theme::ACCENT));
+                ui.label(egui::RichText::new(&view.message).color(palette.accent));
             }
         });
         ui.add_space(8.0);
 
         if !view.review.is_empty() {
-            theme::card(ui, None, |ui| {
+            theme::card(ui, &palette, None, |ui| {
                 ui.label(egui::RichText::new("Needs a human").strong());
                 ui.label(
                     egui::RichText::new(
@@ -693,7 +705,7 @@ impl MagpieApp {
                         ui.label(
                             egui::RichText::new(format!("{confidence:.2}"))
                                 .monospace()
-                                .color(theme::ACCENT),
+                                .color(palette.accent),
                         );
                         ui.label(rel);
                     });
@@ -703,7 +715,7 @@ impl MagpieApp {
         }
 
         if !view.plans.is_empty() {
-            theme::card(ui, None, |ui| {
+            theme::card(ui, &palette, None, |ui| {
                 ui.label(egui::RichText::new("Plans waiting").strong());
                 for plan in view.plans.iter().take(10) {
                     let id = plan["id"].as_str().unwrap_or("");
@@ -732,7 +744,7 @@ impl MagpieApp {
         }
 
         if !view.journals.is_empty() {
-            theme::card(ui, None, |ui| {
+            theme::card(ui, &palette, None, |ui| {
                 ui.label(egui::RichText::new("Applied plans").strong());
                 for journal in view.journals.iter().take(10) {
                     let id = journal["id"].as_str().unwrap_or("");
@@ -755,7 +767,8 @@ impl MagpieApp {
     }
 
     fn settings_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
-        theme::card(ui, Some(theme::ACCENT), |ui| {
+        let palette = self.palette();
+        theme::card(ui, &palette, Some(palette.accent), |ui| {
             ui.label(egui::RichText::new("Settings").size(19.0).strong());
             ui.add_space(4.0);
             let mut mature = self.settings.mature_visible;
@@ -786,15 +799,38 @@ impl MagpieApp {
                 self.save_settings();
             }
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.label("Theme");
-                if ui.selectable_label(self.dark, "Dark").clicked() && !self.dark {
-                    actions.push(Act::Theme);
-                }
-                if ui.selectable_label(!self.dark, "Light").clicked() && self.dark {
-                    actions.push(Act::Theme);
-                }
-            });
+            ui.label(egui::RichText::new("Skin").size(16.0).strong());
+            ui.label(
+                egui::RichText::new("Three curated palettes. Everything repaints at once.")
+                    .color(theme::dim_text(ui)),
+            );
+            ui.add_space(2.0);
+            for skin in SkinId::ALL {
+                let selected = self.skin == skin;
+                ui.horizontal(|ui| {
+                    skin_swatch(ui, &skin.palette(), selected);
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new(skin.label()).strong());
+                        ui.label(
+                            egui::RichText::new(skin.blurb())
+                                .size(12.0)
+                                .color(theme::dim_text(ui)),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if selected {
+                            ui.label(
+                                egui::RichText::new("active")
+                                    .size(12.0)
+                                    .color(self.palette().accent),
+                            );
+                        } else if ui.small_button("use").clicked() {
+                            actions.push(Act::Skin(skin));
+                        }
+                    });
+                });
+                ui.add_space(2.0);
+            }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label(format!("Zoom {:.0}%", self.zoom * 100.0));
@@ -805,7 +841,7 @@ impl MagpieApp {
             });
         });
         ui.add_space(8.0);
-        theme::card(ui, None, |ui| {
+        theme::card(ui, &palette, None, |ui| {
             ui.label(egui::RichText::new("Storage").strong());
             ui.label(format!("Home: {}", self.catalog.paths().home().display()));
             ui.label(format!(
@@ -826,8 +862,9 @@ impl MagpieApp {
     }
 
     fn stats_page(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
         let stats = self.stats.clone().unwrap_or_default();
-        theme::card(ui, Some(theme::ACCENT), |ui| {
+        theme::card(ui, &palette, Some(palette.accent), |ui| {
             ui.label(egui::RichText::new("Statistics").size(19.0).strong());
             ui.label(format!(
                 "{} libraries, {} items, {} pages, {} series",
@@ -839,7 +876,7 @@ impl MagpieApp {
                         "{} items are missing (unplugged drive or deleted file); they are kept so progress is not lost",
                         stats.missing
                     ))
-                    .color(theme::ACCENT),
+                    .color(palette.accent),
                 );
             }
             if let Some(ms) = stats.last_scan_ms {
@@ -848,7 +885,7 @@ impl MagpieApp {
         });
         ui.add_space(8.0);
         for lib in &stats.per_library {
-            theme::card(ui, None, |ui| {
+            theme::card(ui, &palette, None, |ui| {
                 ui.label(egui::RichText::new(&lib.name).strong());
                 ui.label(format!(
                     "{} items  {} pages  {}  {} dirs  ({})",
@@ -859,13 +896,13 @@ impl MagpieApp {
                     lib.kind.as_str()
                 ));
                 if lib.mature {
-                    ui.label(egui::RichText::new("mature").color(theme::ACCENT));
+                    ui.label(egui::RichText::new("mature").color(palette.accent));
                 }
             });
             ui.add_space(4.0);
         }
         for drive in &stats.drives {
-            theme::card(ui, None, |ui| {
+            theme::card(ui, &palette, None, |ui| {
                 ui.label(format!(
                     "Drive {} ({})",
                     drive.volume,
@@ -880,7 +917,7 @@ impl MagpieApp {
             });
             ui.add_space(4.0);
         }
-        theme::card(ui, None, |ui| {
+        theme::card(ui, &palette, None, |ui| {
             ui.label(egui::RichText::new("External tools").strong());
             let report = self.catalog.tools_report();
             for (name, label) in [
@@ -904,7 +941,8 @@ impl MagpieApp {
     }
 
     fn help_page(&self, ui: &mut egui::Ui) {
-        theme::card(ui, Some(theme::ACCENT), |ui| {
+        let palette = self.palette();
+        theme::card(ui, &palette, Some(palette.accent), |ui| {
             ui.label(egui::RichText::new("MagpieCraft").size(19.0).strong());
             ui.label(format!(
                 "Version {} - inventory and read a collection you already own.",
@@ -918,7 +956,7 @@ impl MagpieApp {
             );
         });
         ui.add_space(8.0);
-        theme::card(ui, None, |ui| {
+        theme::card(ui, &palette, None, |ui| {
             ui.label(egui::RichText::new("Keyboard").strong());
             for line in [
                 "Arrows / Space / Shift+Space: page forward and back",
@@ -934,7 +972,7 @@ impl MagpieApp {
             }
         });
         ui.add_space(8.0);
-        theme::card(ui, None, |ui| {
+        theme::card(ui, &palette, None, |ui| {
             ui.label(egui::RichText::new("Not there yet").strong());
             for line in [
                 "CBR/RAR and PDF pages (Tier 2; 7-Zip and PdfCraft)",
@@ -1026,7 +1064,9 @@ impl MagpieApp {
                             ("Add library", Act::AddLibrary),
                             ("Scan all libraries", Act::ScanAll),
                             ("Full rescan", Act::ScanFull),
-                            ("Toggle theme", Act::Theme),
+                            ("Skin: Magpie Ink", Act::Skin(SkinId::MagpieInk)),
+                            ("Skin: Paper Library", Act::Skin(SkinId::PaperLibrary)),
+                            ("Skin: Neon Shelf", Act::Skin(SkinId::NeonShelf)),
                             ("Statistics", Act::GoStats),
                             ("Organise", Act::GoOrganise),
                             ("Plan renames", Act::PlanRename),
@@ -1162,6 +1202,14 @@ impl MagpieApp {
 }
 
 impl eframe::App for MagpieApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // The menu bar, search row and status bar are painted straight onto the
+        // window; eframe's default clear colour is near-black, which would frame
+        // a light skin in black. The skin owns the background instead.
+        let c = self.palette().canvas;
+        egui::Color32::from_rgb(c.r(), c.g(), c.b()).to_normalized_gamma_f32()
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if let Some(next) = theme::handle_ctrl_wheel(ctx, self.zoom) {
             self.set_zoom(ctx, next);
@@ -1173,10 +1221,9 @@ impl eframe::App for MagpieApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        if self.applied_theme != Some(self.dark) {
-            ctx.set_visuals(theme::visuals(self.dark));
-            self.applied_theme = Some(self.dark);
-        }
+        // Set every frame, like djcraft: eframe may reset the style (system theme
+        // tracking), and a conditional set can silently lose.
+        ctx.set_visuals(theme::visuals(&self.palette()));
         let mut actions: Vec<Act> = Vec::new();
 
         // `App::ui` hands over an unbounded Ui, so panels do not size themselves.
@@ -1202,12 +1249,20 @@ impl eframe::App for MagpieApp {
         );
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+            let palette = self.palette();
+            theme::paint_backdrop(ui, &palette, content);
             match self.page {
                 Page::Browse => {
                     let nav = egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            library::show(ui, &mut self.browse, &mut self.covers, &mut self.catalog)
+                            library::show(
+                                ui,
+                                &mut self.browse,
+                                &mut self.covers,
+                                &mut self.catalog,
+                                &palette,
+                            )
                         })
                         .inner;
                     match nav {
@@ -1241,7 +1296,8 @@ impl eframe::App for MagpieApp {
                 Page::Reader => {
                     let mut back = false;
                     if let Some(reader) = self.reader.as_mut() {
-                        if let Action::Back = reader.show(ui, &mut self.catalog, content) {
+                        if let Action::Back = reader.show(ui, &mut self.catalog, content, &palette)
+                        {
                             back = true;
                         }
                     } else {
@@ -1295,6 +1351,43 @@ fn empty_browse() -> magpiecraft_core::BrowseView {
         items: Vec::new(),
         total_folders: 0,
         total_items: 0,
+    }
+}
+
+/// A painted preview of a skin: canvas, card, accent and one kind stripe.
+fn skin_swatch(ui: &mut egui::Ui, palette: &SkinPalette, selected: bool) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(64.0, 44.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, palette.canvas);
+    let card = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 10.0, rect.top() + 6.0),
+        egui::pos2(rect.right() - 10.0, rect.bottom() - 6.0),
+    );
+    painter.rect_filled(card, 3.0, palette.card);
+    painter.rect_filled(
+        egui::Rect::from_min_size(card.min, egui::vec2(3.0, card.height())),
+        0.0,
+        palette.kind_video,
+    );
+    painter.circle_filled(
+        egui::pos2(card.right() - 10.0, card.center().y),
+        4.0,
+        palette.accent,
+    );
+    if selected {
+        painter.rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(2.0, palette.accent),
+            egui::StrokeKind::Inside,
+        );
+    } else {
+        painter.rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(1.0, palette.border),
+            egui::StrokeKind::Inside,
+        );
     }
 }
 
