@@ -409,6 +409,147 @@ fn a_backup_never_overwrites_a_different_file_and_refuses_a_bad_root() {
 }
 
 #[test]
+fn convert_plan_refuses_what_it_cannot_convert() {
+    let (home, root) = fixture("convert-guard");
+    std::fs::write(root.join("notes.txt"), b"not media").unwrap();
+    let mut c = catalog(&home);
+    c.add_library("Video", &root.display().to_string(), "video", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+
+    // Unknown preset.
+    let some_key = "lib:1|Film 2020.mp4".to_string();
+    assert_eq!(
+        c.plan_convert(&some_key, "nope", None).unwrap_err().kind(),
+        "invalid"
+    );
+    // A comic is not converted.
+    let (comic_home, comic_root) = fixture("convert-comic");
+    let mut cc = catalog(&comic_home);
+    cc.add_library(
+        "Comics",
+        &comic_root.display().to_string(),
+        "comics",
+        false,
+        None,
+    )
+    .unwrap();
+    cc.scan(None, false).unwrap();
+    let comic = cc.browse(Some("lib:1|Saga")).unwrap().items.remove(0);
+    let comic_key = comic.key.clone();
+    assert_eq!(
+        cc.plan_convert(&comic_key, "remux-mkv", None)
+            .unwrap_err()
+            .kind(),
+        "invalid",
+        "presets apply to video and audio, not comics: {comic:?}"
+    );
+    // No ffmpeg configured.
+    c.set_tools(magpiecraft_core::Toolchain::default());
+    let item = c.browse(Some("lib:1|")).unwrap().items;
+    assert!(item.is_empty(), "a .txt is not an item");
+    std::fs::write(root.join("Clip 2020.mp4"), b"not a real video").unwrap();
+    c.scan(None, false).unwrap();
+    let item_key = c.browse(Some("lib:1|")).unwrap().items.remove(0).key;
+    assert_eq!(
+        c.plan_convert(&item_key, "remux-mkv", None)
+            .unwrap_err()
+            .kind(),
+        "not_implemented"
+    );
+    drop(c);
+    drop(cc);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_dir_all(&comic_home).unwrap();
+    std::fs::remove_dir_all(&comic_root).unwrap();
+}
+
+#[test]
+fn convert_plan_remuxes_a_generated_clip_and_undo_removes_the_output() {
+    use std::process::Command as ProcCommand;
+    let ffmpeg = match magpiecraft_core::Toolchain::detect().ffmpeg {
+        Some(exe) => exe,
+        None => {
+            eprintln!("ffmpeg not installed: skipping the convert end-to-end test");
+            return;
+        }
+    };
+    let (home, root) = fixture("convert-live");
+    // A two-second test clip, generated locally.
+    let clip = root.join("Clip 2020.mp4");
+    let made = ProcCommand::new(&ffmpeg)
+        .args([
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=2:size=128x128:rate=5",
+            "-pix_fmt",
+            "yuv420p",
+            &clip.display().to_string(),
+        ])
+        .status();
+    if !made.map(|s| s.success()).unwrap_or(false) || !clip.is_file() {
+        eprintln!("ffmpeg could not generate a test clip: skipping");
+        std::fs::remove_dir_all(&home).unwrap_or(());
+        std::fs::remove_dir_all(&root).unwrap_or(());
+        return;
+    }
+    let mut c = catalog(&home);
+    c.add_library("Video", &root.display().to_string(), "video", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let item = c.browse(Some("lib:1|")).unwrap().items.remove(0);
+    let item_key = item.key.clone();
+
+    let planned = c.plan_convert(&item_key, "remux-mkv", None).unwrap();
+    assert_eq!(planned["operations"], serde_json::json!(1));
+    let plan = &planned["plans"][0];
+    let expected = root.join("Clip 2020.remux-mkv.mkv");
+    assert!(
+        plan["diff"]
+            .as_str()
+            .unwrap()
+            .contains("encode [remux-mkv]"),
+        "{}",
+        plan["diff"]
+    );
+    assert!(
+        plan["diff"]
+            .as_str()
+            .unwrap()
+            .contains(&expected.display().to_string()),
+        "{}",
+        plan["diff"]
+    );
+    let id = plan["id"].as_str().unwrap().to_string();
+
+    let applied = c.apply_plan(&id, true).unwrap();
+    assert_eq!(applied["applied"], serde_json::json!(1));
+    assert_eq!(applied["failed"], serde_json::json!(0));
+    assert!(expected.is_file(), "the remuxed file exists");
+    // The source is untouched and the catalogue still lists the original item only.
+    assert!(clip.is_file());
+    let items = c.browse(Some("lib:1|")).unwrap().items;
+    assert!(items.iter().any(|i| i.key == item.key));
+
+    // Undo removes the output, never the source.
+    let journal = applied["journal"].as_str().unwrap().to_string();
+    let undone = c.undo(&journal, true).unwrap();
+    assert_eq!(undone["restored"], serde_json::json!(1));
+    assert!(!expected.exists());
+    assert!(clip.is_file());
+    // A second undo is refused.
+    assert_eq!(c.undo(&journal, true).unwrap_err().kind(), "invalid");
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn naming_rules_are_pure_and_predictable() {
     let input = NamingInput {
         rel: "Saga/Saga 054.cbz".to_string(),
