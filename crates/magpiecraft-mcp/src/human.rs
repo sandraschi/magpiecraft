@@ -239,6 +239,37 @@ pub fn print(command: &str, value: &Value) {
             );
             println!("  {}", s(value, "path"));
         }
+        "presets" => {
+            if value.get("available").and_then(Value::as_bool) != Some(true) {
+                println!("ffmpeg not found: install it or set MAGPIECRAFT_FFMPEG");
+            }
+            if let Some(presets) = value.get("presets").and_then(Value::as_array) {
+                for p in presets {
+                    println!(
+                        "  {:<14} {:<24} {}",
+                        s(p, "id"),
+                        s(p, "label"),
+                        s(p, "description")
+                    );
+                }
+            }
+        }
+        "convert.plan" => {
+            println!(
+                "{} operation{} planned",
+                n(value, "operations"),
+                if n(value, "operations") == 1 { "" } else { "s" }
+            );
+            if let Some(plans) = value.get("plans").and_then(Value::as_array) {
+                for plan in plans {
+                    println!("  plan {} ({})", s(plan, "id"), s(plan, "kind"));
+                    for line in s(plan, "diff").lines().take(12) {
+                        println!("    {line}");
+                    }
+                }
+            }
+            println!("  {}", s(value, "note"));
+        }
         "review" => {
             println!(
                 "{} item{} in the review queue ({} in total)",

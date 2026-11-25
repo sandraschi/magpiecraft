@@ -109,9 +109,10 @@ mod tests {
         )
         .unwrap();
         let tools = list["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 6);
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"media_curate"));
+        assert!(names.contains(&"media_transform"));
         let call = handle(
             &mut c,
             &json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{

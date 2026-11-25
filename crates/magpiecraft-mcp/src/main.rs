@@ -211,6 +211,16 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// The ffmpeg preset catalogue.
+    Presets,
+    /// Build a conversion plan for one item (nothing encoded until applied).
+    PlanConvert {
+        key: String,
+        #[arg(long)]
+        preset: String,
+        #[arg(long)]
+        out: Option<String>,
+    },
     /// Subtitle sidecars and embedded tracks for one item.
     Subs { key: String },
     /// Shift a subtitle file by seconds into a new file.
@@ -556,6 +566,15 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
         }
         Cmd::BenchScan { .. } | Cmd::Mcp => {
             return Err("internal: command handled before the catalogue was opened".to_string())
+        }
+        Cmd::Presets => (Command::Presets.id(), Command::Presets),
+        Cmd::PlanConvert { key, preset, out } => {
+            let c = Command::PlanConvert {
+                key: key.clone(),
+                preset: preset.clone(),
+                out: out.clone(),
+            };
+            (c.id(), c)
         }
         Cmd::Subs { key } => {
             let c = Command::Subs { key: key.clone() };

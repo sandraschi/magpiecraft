@@ -84,14 +84,30 @@ pub fn tools() -> Value {
              open: hand a film, track, book or photo to the user's player or OS handler, resuming where it \
              left off. open runs a program on the user's machine; it never decodes media itself.",
             json!({
-                "operation": ops(&["volume", "page_offset", "rtl", "progress_get", "progress_set", "page_export", "open", "subs", "subs_shift", "subs_convert", "subs_extract"]),
+                "operation": ops(&["volume", "page_offset", "rtl", "progress_get", "progress_set", "page_export", "open"]),
                 "key": key,
                 "offset": { "type": "integer", "description": "page_offset: scan page minus printed page" },
                 "rtl": { "type": ["boolean", "null"], "description": "rtl: true, false, or null to clear" },
                 "page": { "type": "integer", "description": "progress_set: current page; page_export: page to write" },
                 "total": { "type": "integer", "description": "progress_set: page count if unknown" },
                 "finished": { "type": "boolean", "description": "progress_set: mark as finished" },
-                "out": { "type": "string", "description": "page_export: file to write the page to; subs_*: output file" },
+                "out": { "type": "string", "description": "page_export: file to write the page to" }
+            }),
+            &["operation"]
+        ),
+        tool(
+            "media_transform",
+            "Converting and subtitle work, all of it writing new files. presets: the named ffmpeg recipes \
+             (remux, MP4 compatibility, loudness normalisation, strip metadata) and whether ffmpeg is present. \
+             convert_plan: a plan for one video or track with a preset; apply it with media_curate, undo deletes \
+             the output. subs: sidecar subtitles and embedded tracks for one item. subs_shift: move every cue by \
+             seconds. subs_convert: SRT to WebVTT or back. subs_extract: pull an embedded track out with ffmpeg. \
+             Nothing here edits a source file.",
+            json!({
+                "operation": ops(&["presets", "convert_plan", "subs", "subs_shift", "subs_convert", "subs_extract"]),
+                "key": key,
+                "preset": { "type": "string", "description": "convert_plan: remux-mkv, mp4-compat, loudnorm or strip-metadata" },
+                "out": { "type": "string", "description": "output file; defaults to a suffixed name beside the source" },
                 "path": { "type": "string", "description": "subs_shift/subs_convert: the subtitle file to read" },
                 "by": { "type": "number", "description": "subs_shift: seconds to move the cues, negative to advance" },
                 "to": { "type": "string", "description": "subs_convert: srt or vtt" },
@@ -249,24 +265,6 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
             "open" => Command::OpenItem {
                 key: req_str(args, "key")?,
             },
-            "subs" => Command::Subs {
-                key: req_str(args, "key")?,
-            },
-            "subs_shift" | "subs.shift" => Command::SubsShift {
-                path: req_str(args, "path")?,
-                seconds: args.get("by").and_then(Value::as_f64).unwrap_or(0.0),
-                out: opt_str(args, "out"),
-            },
-            "subs_convert" | "subs.convert" => Command::SubsConvert {
-                path: req_str(args, "path")?,
-                to: req_str(args, "to")?,
-                out: opt_str(args, "out"),
-            },
-            "subs_extract" | "subs.extract" => Command::SubsExtract {
-                key: req_str(args, "key")?,
-                subtitle_index: opt_usize(args, "stream").unwrap_or(0) as u32,
-                out: req_str(args, "out")?,
-            },
             "page_offset" | "offset" => Command::PageOffset {
                 key: req_str(args, "key")?,
                 offset: opt_i32(args, "offset")
@@ -326,6 +324,33 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
                 force: opt_bool(args, "force").unwrap_or(false),
             },
             other => return Err(format!("unknown media_health operation: {other}")),
+        },
+        "media_transform" => match op.as_str() {
+            "presets" => Command::Presets,
+            "convert_plan" | "convert.plan" => Command::PlanConvert {
+                key: req_str(args, "key")?,
+                preset: req_str(args, "preset")?,
+                out: opt_str(args, "out"),
+            },
+            "subs" => Command::Subs {
+                key: req_str(args, "key")?,
+            },
+            "subs_shift" | "subs.shift" => Command::SubsShift {
+                path: req_str(args, "path")?,
+                seconds: args.get("by").and_then(Value::as_f64).unwrap_or(0.0),
+                out: opt_str(args, "out"),
+            },
+            "subs_convert" | "subs.convert" => Command::SubsConvert {
+                path: req_str(args, "path")?,
+                to: req_str(args, "to")?,
+                out: opt_str(args, "out"),
+            },
+            "subs_extract" | "subs.extract" => Command::SubsExtract {
+                key: req_str(args, "key")?,
+                subtitle_index: opt_usize(args, "stream").unwrap_or(0) as u32,
+                out: req_str(args, "out")?,
+            },
+            other => return Err(format!("unknown media_transform operation: {other}")),
         },
         "media_curate" => match op.as_str() {
             "review" => Command::Review {
@@ -395,7 +420,11 @@ mod tests {
     fn schemas_are_well_formed_and_enumerate_operations() {
         let list = tools();
         let arr = list.as_array().unwrap();
-        assert_eq!(arr.len(), 5, "four read tools plus media_curate");
+        assert_eq!(
+            arr.len(),
+            6,
+            "media_catalog, media_search, media_read, media_health, media_curate, media_transform"
+        );
         for t in arr {
             let name = t["name"].as_str().unwrap();
             assert!(name.starts_with("media_"), "{name}");
@@ -425,6 +454,13 @@ mod tests {
         .unwrap();
         assert_eq!(offset.id(), "page_offset");
         assert!(to_command("media_read", &json!({"operation":"volume"})).is_err());
+        let convert = to_command(
+            "media_transform",
+            &json!({"operation":"convert_plan","key":"lib:1|a.mkv","preset":"remux-mkv"}),
+        )
+        .unwrap();
+        assert_eq!(convert.id(), "convert.plan");
+        assert!(to_command("media_transform", &json!({"operation":"nope"})).is_err());
         assert!(to_command("media_catalog", &json!({"operation":"download_everything"})).is_err());
         assert!(to_command("media_catalog", &json!({})).is_err());
     }
