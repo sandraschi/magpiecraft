@@ -74,6 +74,23 @@ reports 16,785 skips.
 Also fixed: `magpiecraft-mcp libraries` printed "no libraries yet" because `dispatch` wraps list
 results; the printer now looks inside `value`. 146 tests, clippy and fmt clean.
 
+## Playback, D8: hand-off, not a decoder (2026-11-25)
+
+Sandra challenged "playback stays out": correct challenge, because the PRD's hand-off line had been
+implemented as a dead end. Now:
+
+- `open <key>` (CLI, MCP `media_read open`, and a click on a film card) launches the configured player
+  with the file and the resume position: VLC (`--start-time`), then mpv (`--start`), then the OS
+  handler; `MAGPIECRAFT_PLAYER` overrides. Detached, own process group.
+- Schema 5: playback position and duration live in `progress` (seconds), duration cached on the item
+  after one ffprobe. Continue lists films and comics in one row with the right units.
+- Comics are refused with a reason. Still out, per D8: decoder, subtitle rendering, transcoding,
+  streaming server (LGPL/GPL linkage, and HomeServeCraft owns remote consumption).
+- Optional later: mpv `--wid` embedding plus JSON IPC, no decoder added.
+
+152 tests, clippy and fmt clean. Live check launched VLC on a real film and continue showed
+`0:00 / 1:44:28`.
+
 ## Next step
 
 1. The remaining A2 work, in this order: identify from metadata (local dumps first: GCD, MangaBaka,
