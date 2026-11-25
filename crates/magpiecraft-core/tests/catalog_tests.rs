@@ -713,6 +713,134 @@ fn comics_are_read_in_the_app_not_handed_to_a_player() {
 }
 
 #[test]
+fn cleanup_quarantines_junk_and_orphans_and_undo_brings_them_back() {
+    let home = tmp("cleanup-home");
+    let root = tmp("cleanup-library");
+    std::fs::write(root.join("Alien 1979.mkv"), vec![0u8; 4096]).unwrap();
+    std::fs::write(
+        root.join("Alien 1979.srt"),
+        b"1\n00:00:01 --> 00:00:02\nHi\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("Orphan.srt"), b"1\n00:00:01 --> 00:00:02\nBye\n").unwrap();
+    std::fs::write(root.join("sample.mkv"), vec![0u8; 100]).unwrap();
+    std::fs::write(root.join("Thumbs.db"), b"junk").unwrap();
+    std::fs::create_dir_all(root.join("Empty Season")).unwrap();
+
+    let mut c = catalog(&home);
+    c.add_library("Video", &root.display().to_string(), "video", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+
+    let planned = c.plan_cleanup(Some("Video")).unwrap();
+    let plan = &planned["plans"][0];
+    let diff = plan["diff"].as_str().unwrap();
+    assert!(diff.contains("Orphan.srt"), "{diff}");
+    assert!(diff.contains("sample.mkv"), "{diff}");
+    assert!(diff.contains("Thumbs.db"), "{diff}");
+    assert!(diff.contains("Empty Season"), "{diff}");
+    assert!(
+        !diff.contains("Alien 1979.srt"),
+        "the matched subtitle stays: {diff}"
+    );
+
+    let id = plan["id"].as_str().unwrap().to_string();
+    let applied = c.apply_plan(&id, true).unwrap();
+    assert_eq!(applied["failed"].as_u64().unwrap(), 0);
+    assert!(!root.join("Orphan.srt").exists());
+    assert!(!root.join("Empty Season").exists());
+    assert!(
+        root.join("Alien 1979.srt").is_file(),
+        "the film's subtitle is untouched"
+    );
+    assert!(root.join("Alien 1979.mkv").is_file());
+
+    let journal = applied["journal"].as_str().unwrap().to_string();
+    c.undo(&journal, true).unwrap();
+    assert!(root.join("Orphan.srt").is_file());
+    assert!(root.join("Empty Season").is_dir());
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn an_ebook_library_is_never_cleaned_automatically() {
+    let home = tmp("cleanup-ebook-home");
+    let root = tmp("cleanup-ebook-library");
+    std::fs::write(root.join("book.epub"), b"book").unwrap();
+    std::fs::write(root.join("metadata.opf"), b"<package/>").unwrap();
+    std::fs::write(root.join("Thumbs.db"), b"junk").unwrap();
+    let mut c = catalog(&home);
+    c.add_library("Books", &root.display().to_string(), "ebook", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let planned = c.plan_cleanup(Some("Books")).unwrap();
+    let plan = &planned["plans"][0];
+    assert_eq!(plan["operations"], serde_json::json!(0));
+    assert!(plan["diff"].as_str().unwrap().contains("not automatic"));
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn verification_baselines_then_detects_bitrot() {
+    let (home, root) = fixture("verify");
+    let mut c = catalog(&home);
+    c.add_library("Comics", &root.display().to_string(), "comics", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+
+    // Nothing verified yet: due, with no manifest.
+    let status = c.verify_status(30).unwrap();
+    assert_eq!(status["due"], serde_json::json!(1));
+    assert_eq!(
+        status["entries"][0]["last_checked_at"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        status["entries"][0]["manifest_exists"],
+        serde_json::json!(false)
+    );
+
+    // First run writes the baseline and says so.
+    let first = c.verify_run(Some("Comics"), 30, false).unwrap();
+    assert_eq!(first["problems"], serde_json::json!(0));
+    assert_eq!(first["results"][0]["baseline"], serde_json::json!(true));
+    assert!(first["files_checked"].as_u64().unwrap() >= 5);
+    let manifest = first["results"][0]["manifest"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(std::path::Path::new(&manifest).is_file());
+
+    // Straight after: not due, and a forced run only when asked.
+    assert_eq!(c.verify_status(30).unwrap()["due"], serde_json::json!(0));
+    assert_eq!(c.verify_run(None, 30, false).unwrap_err().kind(), "invalid");
+
+    // Second run compares and finds nothing wrong.
+    let second = c.verify_run(Some("Comics"), 30, true).unwrap();
+    assert_eq!(second["results"][0]["baseline"], serde_json::json!(false));
+    assert_eq!(second["problems"], serde_json::json!(0));
+
+    // Corrupt one archive: the next verification names it.
+    let mut bytes = std::fs::read(root.join("Saga/Saga 055.cbz")).unwrap();
+    if let Some(last) = bytes.last_mut() {
+        *last ^= 0xFF;
+    }
+    std::fs::write(root.join("Saga/Saga 055.cbz"), &bytes).unwrap();
+    let third = c.verify_run(Some("Comics"), 30, true).unwrap();
+    assert_eq!(third["problems"], serde_json::json!(1));
+    assert_eq!(third["results"][0]["changed"], serde_json::json!(1));
+    let status = c.verify_status(30).unwrap();
+    assert_eq!(status["entries"][0]["last_changed"], serde_json::json!(1));
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn status_reports_the_engine_and_the_optional_tools() {
     let (home, root) = fixture("status");
     let mut c = catalog(&home);

@@ -63,6 +63,7 @@ pub enum PlanKind {
     Rename,
     Quarantine,
     Nfo,
+    Cleanup,
 }
 
 impl PlanKind {
@@ -71,6 +72,7 @@ impl PlanKind {
             PlanKind::Rename => "rename",
             PlanKind::Quarantine => "quarantine",
             PlanKind::Nfo => "nfo",
+            PlanKind::Cleanup => "cleanup",
         }
     }
 
@@ -79,9 +81,115 @@ impl PlanKind {
             "rename" => Some(PlanKind::Rename),
             "quarantine" => Some(PlanKind::Quarantine),
             "nfo" => Some(PlanKind::Nfo),
+            "cleanup" => Some(PlanKind::Cleanup),
             _ => None,
         }
     }
+}
+
+// ----------------------------------------------------------------- cleanup
+/// One file in a folder, as the cleanup rules see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderFile {
+    pub name: String,
+    pub size: u64,
+}
+
+/// What a cleanup would move out of one folder, with the reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderCandidate {
+    pub name: String,
+    pub reason: &'static str,
+    pub bytes: u64,
+}
+
+/// Exact file names that are junk wherever they appear.
+const JUNK_NAMES: &[&str] = &["thumbs.db", ".ds_store", "desktop.ini"];
+
+/// Extensions that belong to a video or a comic rather than being an item.
+const SIDECAR_EXTENSIONS: &[&str] = &["srt", "sub", "ass", "ssa", "vtt", "idx", "sup", "nfo"];
+
+pub fn is_sidecar_name(name: &str) -> bool {
+    SIDECAR_EXTENSIONS.contains(&magpiecraft_scan::extension(name).as_str())
+}
+
+/// Cleanup candidates inside one folder. Pure, so the rules are testable without a
+/// disk. `kind` decides which rules apply: a video library has subtitle sidecars, an
+/// ebook library is left alone entirely.
+pub fn cleanup_in_folder(
+    files: &[FolderFile],
+    kind: crate::model::MediaKind,
+) -> Vec<FolderCandidate> {
+    use crate::model::MediaKind;
+    if kind == MediaKind::Ebook {
+        // A Calibre library keeps .opf, covers and metadata.db next to the book on
+        // purpose. Nothing here is ever automatic.
+        return Vec::new();
+    }
+    let allow_sidecars = matches!(
+        kind,
+        MediaKind::Video
+            | MediaKind::Audio
+            | MediaKind::Comics
+            | MediaKind::Manga
+            | MediaKind::Magazines
+    );
+    let largest = files.iter().map(|f| f.size).max().unwrap_or(0);
+    let mut out: Vec<FolderCandidate> = Vec::new();
+    for file in files {
+        let lower = file.name.to_ascii_lowercase();
+        if JUNK_NAMES.contains(&lower.as_str()) {
+            out.push(FolderCandidate {
+                name: file.name.clone(),
+                reason: "junk file",
+                bytes: file.size,
+            });
+            continue;
+        }
+        if allow_sidecars && is_sidecar_name(&file.name) {
+            let stem = file
+                .name
+                .rsplit_once('.')
+                .map(|(s, _)| s)
+                .unwrap_or(&file.name)
+                .to_ascii_lowercase();
+            let has_media = files.iter().any(|other| {
+                let other_lower = other.name.to_ascii_lowercase();
+                if other_lower == lower {
+                    return false;
+                }
+                let other_stem = other_lower
+                    .rsplit_once('.')
+                    .map(|(s, _)| s)
+                    .unwrap_or(&other_lower);
+                other_stem == stem
+                    && !is_sidecar_name(&other.name)
+                    && magpiecraft_scan::family_of(&other.name).is_some()
+            });
+            if !has_media {
+                out.push(FolderCandidate {
+                    name: file.name.clone(),
+                    reason: "orphan sidecar",
+                    bytes: file.size,
+                });
+            }
+            continue;
+        }
+        // A sample next to the real film: small, and named like a sample.
+        if kind == MediaKind::Video
+            && lower.contains("sample")
+            && largest > 0
+            && file.size.saturating_mul(10) < largest
+        {
+            out.push(FolderCandidate {
+                name: file.name.clone(),
+                reason: "sample file",
+                bytes: file.size,
+            });
+            continue;
+        }
+    }
+    out
 }
 
 /// A proposed set of changes, saved as JSON so `apply` can run in another process.
@@ -734,6 +842,144 @@ impl Catalog {
         }))
     }
 
+    /// Build a cleanup plan for one library or all of them: empty folders, orphan
+    /// sidecars, sample files and junk. Nothing is deleted, everything is quarantined.
+    pub fn plan_cleanup(&mut self, library: Option<&str>) -> MagpieResult<Value> {
+        let libs = self.target_libraries(library)?;
+        let stamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
+        let mut plans: Vec<Plan> = Vec::new();
+        for lib in libs {
+            let kind =
+                crate::model::MediaKind::parse(&lib.kind).unwrap_or(crate::model::MediaKind::Other);
+            if kind == crate::model::MediaKind::Ebook {
+                let plan = Plan {
+                    id: plan_id(),
+                    created_at: now(),
+                    kind: PlanKind::Cleanup.as_str().to_string(),
+                    library: lib.name.clone(),
+                    library_id: lib.id,
+                    root: lib.root.clone(),
+                    ops: Vec::new(),
+                    skipped: vec![format!(
+                        "{}: an ebook library keeps .opf, covers and metadata.db on purpose, so cleanup is not automatic",
+                        lib.name
+                    )],
+                    bytes: 0,
+                };
+                self.save_plan(&plan)?;
+                plans.push(plan);
+                continue;
+            }
+            let root = PathBuf::from(&lib.root);
+            if !root.is_dir() {
+                continue;
+            }
+            let walk = magpiecraft_scan::walk(
+                &root,
+                &magpiecraft_scan::WalkOptions {
+                    min_pages: self.settings().imgdir_min_pages,
+                    follow_links: false,
+                    limit: 0,
+                },
+            )
+            .map_err(MagpieError::Scan)?;
+            // Group files by the folder they live in.
+            let mut by_parent: std::collections::HashMap<&str, Vec<FolderFile>> =
+                std::collections::HashMap::new();
+            for file in &walk.files {
+                by_parent
+                    .entry(file.parent.as_str())
+                    .or_default()
+                    .push(FolderFile {
+                        name: file.name.clone(),
+                        size: file.size,
+                    });
+            }
+            let mut ops: Vec<PlanOp> = Vec::new();
+            let mut skipped: Vec<String> = Vec::new();
+            let mut bytes = 0u64;
+            let quarantine_for = |rel: &str| -> String {
+                let mut target = self
+                    .quarantine_root()
+                    .join(&stamp)
+                    .join(sanitise_segment(&lib.name));
+                for part in rel.split('/').filter(|p| !p.is_empty()) {
+                    target.push(part);
+                }
+                target.display().to_string()
+            };
+            // Empty folders: the topmost empty subtree, moved as one directory.
+            let empty: std::collections::HashSet<&str> = walk
+                .dirs
+                .iter()
+                .filter(|d| d.files == 0 && d.subdirs == 0)
+                .map(|d| d.rel.as_str())
+                .collect();
+            let mut topmost: Vec<&str> = Vec::new();
+            for rel in &empty {
+                let parent = match rel.rsplit_once('/') {
+                    Some((p, _)) => p,
+                    None => "",
+                };
+                if !empty.contains(parent) && !rel.is_empty() {
+                    topmost.push(rel);
+                }
+            }
+            for rel in topmost {
+                let mut path = root.clone();
+                for part in rel.split('/').filter(|p| !p.is_empty()) {
+                    path.push(part);
+                }
+                ops.push(PlanOp::Move {
+                    from: path.display().to_string(),
+                    to: quarantine_for(rel),
+                });
+            }
+            // Files inside each folder.
+            for (parent, files) in by_parent {
+                for candidate in cleanup_in_folder(&files, kind) {
+                    let rel = if parent.is_empty() {
+                        candidate.name.clone()
+                    } else {
+                        format!("{parent}/{}", candidate.name)
+                    };
+                    let mut path = root.clone();
+                    for part in rel.split('/').filter(|p| !p.is_empty()) {
+                        path.push(part);
+                    }
+                    bytes = bytes.saturating_add(candidate.bytes);
+                    ops.push(PlanOp::Move {
+                        from: path.display().to_string(),
+                        to: quarantine_for(&rel),
+                    });
+                }
+            }
+            if ops.is_empty() && skipped.is_empty() {
+                skipped.push(format!("{}: nothing to clean", lib.name));
+            }
+            let plan = Plan {
+                id: plan_id(),
+                created_at: now(),
+                kind: PlanKind::Cleanup.as_str().to_string(),
+                library: lib.name.clone(),
+                library_id: lib.id,
+                root: lib.root.clone(),
+                ops,
+                skipped,
+                bytes,
+            };
+            self.save_plan(&plan)?;
+            plans.push(plan);
+        }
+        Ok(json!({
+            "ok": true,
+            "kind": "cleanup",
+            "plans": plans.iter().map(plan_summary).collect::<Vec<_>>(),
+            "operations": plans.iter().map(|p| p.ops.len()).sum::<usize>(),
+            "note": "nothing has changed; apply each plan by id with confirm=true. Everything goes to quarantine, nothing is deleted",
+        }))
+    }
+
     /// Build a quarantine plan for one item: a move into the app's quarantine folder,
     /// never a delete.
     pub fn plan_quarantine(&mut self, key: &str) -> MagpieResult<Value> {
@@ -1306,6 +1552,55 @@ mod tests {
             series_from_folder("Murder, She Wrote (1984)"),
             "Murder, She Wrote"
         );
+    }
+
+    #[test]
+    fn cleanup_rules_are_kind_aware_and_conservative() {
+        use crate::model::MediaKind;
+        let file = |name: &str, size: u64| FolderFile {
+            name: name.to_string(),
+            size,
+        };
+        // A sidecar next to its film stays.
+        let video = vec![
+            file("Alien 1979.mkv", 4_000_000_000),
+            file("Alien 1979.srt", 40_000),
+            file("Alien 1979.nfo", 900),
+        ];
+        assert!(cleanup_in_folder(&video, MediaKind::Video).is_empty());
+
+        // An orphan subtitle and a sample and junk go.
+        let messy = vec![
+            file("Alien 1979.mkv", 4_000_000_000),
+            file("Something Else.srt", 40_000),
+            file("sample.mkv", 20_000_000),
+            file("Thumbs.db", 5_000),
+        ];
+        let found = cleanup_in_folder(&messy, MediaKind::Video);
+        let names: Vec<&str> = found.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Something Else.srt", "sample.mkv", "Thumbs.db"]);
+        assert_eq!(found[0].reason, "orphan sidecar");
+        assert_eq!(found[1].reason, "sample file");
+        assert_eq!(found[2].reason, "junk file");
+
+        // A Calibre library is never touched, whatever is lying around.
+        let calibre = vec![
+            file("book.epub", 900_000),
+            file("metadata.opf", 4_000),
+            file("cover.jpg", 80_000),
+            file("Thumbs.db", 5_000),
+        ];
+        assert!(cleanup_in_folder(&calibre, MediaKind::Ebook).is_empty());
+
+        // A comic sidecar next to its archive stays; an orphan one goes.
+        let comics = vec![
+            file("Saga 054.cbz", 80_000_000),
+            file("Saga 054.nfo", 900),
+            file("dangling.nfo", 900),
+        ];
+        let found = cleanup_in_folder(&comics, MediaKind::Comics);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "dangling.nfo");
     }
 
     #[test]
