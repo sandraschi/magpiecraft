@@ -108,6 +108,7 @@ pub enum Command {
         mature_visible: Option<bool>,
         imgdir_min_pages: Option<usize>,
         theme: Option<String>,
+        skin: Option<String>,
         zoom: Option<f32>,
     },
     /// Items whose filename parse was uncertain.
@@ -339,6 +340,7 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
             mature_visible,
             imgdir_min_pages,
             theme,
+            skin,
             zoom,
         } => {
             let mut settings = catalog.settings().clone();
@@ -348,8 +350,17 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
             if let Some(v) = imgdir_min_pages {
                 settings.imgdir_min_pages = v;
             }
-            if let Some(v) = theme {
-                settings.theme = v;
+            // The skin wins when both are given; a bare theme maps to the default
+            // skin of that mode so the old flag keeps working.
+            if let Some(v) = skin {
+                settings.skin = v;
+            } else if let Some(v) = theme {
+                match v.trim().to_ascii_lowercase().as_str() {
+                    "light" | "paper" => settings.skin = "paper-library".to_string(),
+                    "dark" | "ink" => settings.skin = "magpie-ink".to_string(),
+                    "neon" => settings.skin = "neon-shelf".to_string(),
+                    _ => {}
+                }
             }
             if let Some(v) = zoom {
                 settings.zoom = v;

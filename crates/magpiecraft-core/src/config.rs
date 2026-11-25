@@ -94,6 +94,45 @@ impl Paths {
     }
 }
 
+/// The look of the app. One id, three curated skins; the palettes themselves live
+/// in the app crate, but the id and its lightness live here so settings, the CLI
+/// and MCP all agree on what names are legal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkinId {
+    MagpieInk,
+    PaperLibrary,
+    NeonShelf,
+}
+
+impl SkinId {
+    pub const ALL: [Self; 3] = [Self::MagpieInk, Self::PaperLibrary, Self::NeonShelf];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            SkinId::MagpieInk => "magpie-ink",
+            SkinId::PaperLibrary => "paper-library",
+            SkinId::NeonShelf => "neon-shelf",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "magpie-ink" | "ink" | "dark" => Some(SkinId::MagpieInk),
+            "paper-library" | "paper" | "light" => Some(SkinId::PaperLibrary),
+            "neon-shelf" | "neon" => Some(SkinId::NeonShelf),
+            _ => None,
+        }
+    }
+
+    pub fn is_light(self) -> bool {
+        matches!(self, SkinId::PaperLibrary)
+    }
+
+    pub fn fallback() -> Self {
+        SkinId::MagpieInk
+    }
+}
+
 /// User settings. Small on purpose: everything else belongs in the catalogue.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -102,8 +141,10 @@ pub struct Settings {
     pub imgdir_min_pages: usize,
     /// Mature-flagged libraries are hidden until this is true.
     pub mature_visible: bool,
-    /// `dark` or `light`.
+    /// `dark` or `light`. Kept in sync with the skin: setting a skin sets this.
     pub theme: String,
+    /// Which curated skin paints the app: `magpie-ink`, `paper-library` or `neon-shelf`.
+    pub skin: String,
     /// UI zoom factor, persisted so Ctrl+wheel survives a restart.
     pub zoom: f32,
     /// Cover cache size in pixels. The long edge drives an aspect box.
@@ -131,6 +172,7 @@ impl Default for Settings {
             imgdir_min_pages: 3,
             mature_visible: false,
             theme: "dark".to_string(),
+            skin: SkinId::fallback().id().to_string(),
             zoom: 1.0,
             cover_width: 360,
             cover_height: 520,
@@ -158,9 +200,16 @@ impl Settings {
         self.pdf_dpi = self.pdf_dpi.clamp(96, 400);
         self.extract_cache_mb = self.extract_cache_mb.clamp(256, 200_000);
         self.render_cache_mb = self.render_cache_mb.clamp(64, 50_000);
-        if self.theme != "light" {
-            self.theme = "dark".to_string();
+        if SkinId::parse(&self.skin).is_none() {
+            self.skin = SkinId::fallback().id().to_string();
         }
+        // The skin is authoritative for looks; the theme string follows it so old
+        // readers of the settings (and the --theme flag) keep working.
+        self.theme = if SkinId::parse(&self.skin).is_some_and(SkinId::is_light) {
+            "light".to_string()
+        } else {
+            "dark".to_string()
+        };
         self
     }
 }
@@ -223,11 +272,12 @@ mod tests {
         let paths = tmp_home("settings");
         assert_eq!(load_settings(&paths), Settings::default(), "missing file");
         let s = Settings {
-            theme: "light".to_string(),
+            skin: "paper-library".to_string(),
             zoom: 1.5,
             ..Settings::default()
         };
         save_settings(&paths, &s).unwrap();
+        assert_eq!(load_settings(&paths).skin, "paper-library");
         assert_eq!(load_settings(&paths).theme, "light");
         assert!((load_settings(&paths).zoom - 1.5).abs() < f32::EPSILON);
         std::fs::write(paths.settings_file(), "{not json").unwrap();
@@ -241,14 +291,26 @@ mod tests {
             zoom: 99.0,
             cover_width: 5,
             theme: "purple".to_string(),
+            skin: "neon".to_string(),
             imgdir_min_pages: 0,
             ..Settings::default()
         }
         .sanitised();
         assert_eq!(s.zoom, 2.5);
         assert_eq!(s.cover_width, 80);
-        assert_eq!(s.theme, "dark");
+        assert_eq!(s.skin, "neon", "a known alias survives sanitising");
+        assert_eq!(s.theme, "dark", "the theme follows the skin");
         assert_eq!(s.imgdir_min_pages, 1);
+    }
+
+    #[test]
+    fn an_unknown_skin_falls_back_to_the_default() {
+        let s = Settings {
+            skin: "chartreuse".to_string(),
+            ..Settings::default()
+        }
+        .sanitised();
+        assert_eq!(s.skin, SkinId::fallback().id());
     }
 
     #[test]

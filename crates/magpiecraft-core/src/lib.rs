@@ -20,7 +20,7 @@ pub mod verify;
 
 pub use catalog::{Catalog, SearchMode};
 pub use command::{dispatch, Command};
-pub use config::{load_settings, save_settings, Paths, Settings};
+pub use config::{load_settings, save_settings, Paths, Settings, SkinId};
 pub use error::{MagpieError, MagpieResult};
 pub use model::{
     BrowseView, Crumb, DriveView, DupGroupView, DuplicatesView, FolderView, ItemKey, ItemView,
