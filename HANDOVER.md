@@ -134,6 +134,24 @@ Remaining in Tier 3: the verified backup copy, ffmpeg presets, subtitle tools, S
 
 166 tests. Remaining: ffmpeg presets, subtitle tools, SMART drive health.
 
+## Tier 3, fifth slice: ffmpeg presets (2026-11-25)
+
+- `presets` lists four named recipes with their exact ffmpeg args: `remux-mkv` (copy to Matroska,
+  fast, lossless), `mp4-compat` (H.264 CRF 20 + AAC 192k, faststart), `loudnorm` (copy video, EBU R128
+  to -16 LUFS), `strip-metadata` (drop every tag).
+- `plan-convert <key> --preset <id>` plans one video or track. Refuses comics/books/photos, a missing
+  source, an existing target and a missing ffmpeg. Output goes beside the source as
+  `<stem>.<preset>.<ext>` so two presets never collide.
+- Apply encodes with ffmpeg (invoked, never linked); the output must probe as media with a positive
+  duration or it is deleted and counted as a failure. Undo (`Encode` op) deletes the output, never the
+  source. No rescan, since a conversion changes nothing in the library.
+- `media_transform` is now the sixth MCP tool: `presets`, `convert_plan`, `subs`, `subs_shift`,
+  `subs_convert`, `subs_extract`.
+- Live: La Traviata 1982.avi (1.4 GB) remuxed to MKV in 31 s, ffprobe 6617 s, then undone with the
+  library byte-identical.
+
+180 tests, clippy and fmt clean. Remaining in Tier 3: SMART drive health, local subtitle generation.
+
 ## Tier 3, fourth slice: subtitles
 
 - `subs`, `subs-shift`, `subs-convert`, `subs-extract`: sidecar discovery, signed cue shifting, SRT to
