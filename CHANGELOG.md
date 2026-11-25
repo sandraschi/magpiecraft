@@ -2,6 +2,32 @@
 
 All notable changes to MagpieCraft. Newest first. Dates are the day the work landed.
 
+## 0.5.0 - 2026-11-25 (Tier 3: integrity)
+
+Pillar C, the part after "find duplicates".
+
+Added:
+
+- **Verification schedule.** `verify` reports which libraries are due (default 30 days) with what
+  the last run found; `verify-run` writes the manifest as a baseline the first time, compares
+  afterwards, and records every run in a new `verifications` table (schema 6). A corrupt file is
+  named by the next run ("changed 1").
+- **Cleanup planner.** `plan-cleanup` proposes empty folders, orphan sidecars (`srt`, `sub`, `ass`,
+  `ssa`, `vtt`, `idx`, `sup`, `nfo` whose stem matches nothing), sample files and junk
+  (`Thumbs.db`, `.DS_Store`, `desktop.ini`) as quarantines, with a reason per file. Kind-aware: an
+  ebook library is never cleaned automatically because Calibre keeps `.opf`, covers and
+  `metadata.db` on purpose. Apply on confirm, undo restores.
+- **Backup status.** `backup` compares each library with the copies under the configured backup
+  roots (`backup-roots`) and says complete, partial or not backed up per library. A count, not a
+  checksum: `verify_run` is what proves integrity. Verified copy plans are next.
+- The scan walker reports files per folder, which is what makes "empty folder" and "orphan
+  sidecar" answerable without a second pass over the disk.
+
+Measured: a baseline of 55 files (1 GB) in 8 s. 158 tests.
+
+Still planned in Tier 3: near-duplicate detection (perceptual), SMART drive health, ffmpeg presets,
+subtitle tools (extract, convert, shift, local generation), and the verified backup copy.
+
 ## 0.4.0 - 2026-11-25 (Open with player, decision D8)
 
 Playback is a hand-off, not a dead end.

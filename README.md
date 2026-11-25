@@ -86,6 +86,12 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | BLAKE3 on demand | Implemented | `hash`, or `media_health hash` |
 | Exact duplicates | Implemented | Size first, then hash |
 | Checksum manifests and verification | Implemented | Tab separated, written outside the library |
+| Verification schedule | Implemented | `verify` says what is due (default 30 days); `verify-run` writes the baseline, compares afterwards, and records every run |
+| Cleanup: empty folders, orphan sidecars, samples, junk | Implemented | A plan of quarantines with reasons; an ebook library is never touched automatically |
+| Backup status (3-2-1 view) | Implemented | Compares each library with the copies under the configured backup roots; a count, not a checksum |
+| Verified backup copy | Planned | The copy is a plan with a journal; it lands with the next integrity pass |
+| Near-duplicate detection (perceptual) | Planned | Exact duplicates are done; perceptual needs a decoder budget for video |
+| Drive health (SMART) | Planned | Needs a Windows API pass |
 | FTS5 search | Implemented | Prefix tokens, diacritics folded, substring fallback |
 | Offline drive catalogue | Partial | Per-volume item counts and online state; free space and growth need a Tier 3 pass |
 | Technical inspection (ffprobe) | Implemented | Video and audio files; ffprobe is optional |
@@ -210,7 +216,7 @@ Nothing is ever written into a library. Covers, caches and manifests live here.
 
 Measured 2026-11-24 on the Tier 2 commit:
 
-- `cargo test --workspace`: **152 passed**, 0 failed
+- `cargo test --workspace`: **158 passed**, 0 failed
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean
   (`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented` denied workspace-wide)
 - `cargo fmt --all --check`: clean

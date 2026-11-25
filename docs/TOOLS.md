@@ -30,6 +30,10 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `hash <key>` | BLAKE3 of one item, stored on the row |
 | `manifest-write <library> [--out path]` | Write a checksum manifest (default under the data home) |
 | `manifest-verify <library> [--manifest path]` | Re-hash and report missing, changed and new files |
+| `verify [--every-days N]` | Which libraries are due a verification, and what the last run found |
+| `verify-run [library] [--every-days N] [--force]` | Write the baseline on the first run, compare afterwards, record every run |
+| `backup` | Where each library stands against the configured backup roots |
+| `backup-roots [paths...] [--clear]` | Set or clear the backup roots |
 | `series [library]` | Series with their direction overrides |
 | `series-rtl <library> <series> [--on\|--off]` | Set the reading direction of a series |
 | `inspect <path>` | ffprobe technical details for one media file |
@@ -112,11 +116,11 @@ quarantine.
 | `review` | `library`, `limit` | Items with an uncertain filename parse and their confidence |
 | `plan_rename` | `library`, `preset` (`auto`/`comics`/`manga`/`video`), `limit` | Plan id, diff, skipped items. Nothing changes |
 | `plan_quarantine` | `key` | Plan id that moves the item into quarantine |
+| `plan_cleanup` | `library` | Plan of quarantines: empty folders, orphan sidecars, samples, junk |
 | `plans` | - | Saved plans with their diff |
 | `apply` | `id`, `confirm=true` | Applied and failed counts, journal id |
 | `journals` | - | Applied plans, with `undone` state |
 | `undo` | `id`, `confirm=true` | Restored count, problems |
-
 An agent that calls `apply` or `undo` without `confirm=true` gets an `confirm_required` error and
 nothing happens.
 
@@ -129,6 +133,9 @@ nothing happens.
 | `manifest_write` | `library`, `out` | Manifest path, files, bytes |
 | `manifest_verify` | `library`, `manifest` | Checked, ok, missing, changed, clean |
 | `inspect` | `path` | ffprobe format and stream details |
+| `verify_status` | `every_days` | Per-library due state and what the last run found |
+| `verify_run` | `library`, `every_days`, `force` | Baseline or comparison, recorded per run |
+| `backup_status` | - | Each library against the configured backup roots |
 
 Tool names are accepted with underscores (`media_catalog`) or dots (`media.catalog`), because some MCP
 hosts validate tool names strictly. Results are JSON text in `content[0].text`; `isError` mirrors

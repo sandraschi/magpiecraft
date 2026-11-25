@@ -202,6 +202,34 @@ Naming presets follow the kind: comics and manga by series and volume, films by 
 episodes by series folder and SxxExx. Books, music and photos are left alone with a reason, because
 their owning app or their tags know better than a file name does.
 
+## Integrity: manifests, the verification schedule, cleanup and backup status
+
+```text
+manifest_write  -> blake3 of every file, written under the app data home
+verify (status) -> per library: last run, days since, due?          (default 30 days)
+verify_run      -> no manifest yet  => write it, record a baseline
+                   manifest exists  => compare, record ok/missing/changed
+cleanup plan    -> empty folders, orphan sidecars, samples, junk => quarantine
+backup status   -> per library: how many of its files exist under each backup root
+```
+
+Rules worth knowing:
+
+- A baseline proves nothing yet, and says so (`baseline: true`). The second run is the
+  first real verification.
+- Every run is a row in `verifications`, so "what is due" is a query, not a guess, and the
+  UI or an agent can nag at the right time.
+- Cleanup is kind-aware and conservative. Sidecars are `srt/sub/ass/ssa/vtt/idx/sup/nfo`; a
+  sidecar whose stem matches a media file in the same folder is kept. `Thumbs.db`,
+  `.DS_Store` and `desktop.ini` are junk everywhere. Video samples are small files named
+  like a sample next to a much larger file. An ebook library is never cleaned automatically,
+  because Calibre keeps `.opf`, covers and `metadata.db` on purpose.
+- Cleanup moves things into `quarantine/<timestamp>/<library>/`, so undo is a move back and
+  nothing is ever deleted.
+- Backup status is a count of files per library under each configured root. It catches a
+  backup that never started, one that stopped halfway, and one that is stale. It is not a
+  checksum check; manifests and `verify_run` are.
+
 ## Playback is a hand-off, not a decoder (D8)
 
 MagpieCraft does not decode video or audio. `open <key>` launches a real player with the file and the
