@@ -431,8 +431,9 @@ pub fn episode_of(stem: &str) -> Option<(u32, u32, usize)> {
                 if k > start_episode {
                     let season = collect_u32(&chars[start_season..j]);
                     let episode = collect_u32(&chars[start_episode..k]);
-                    // Season 0 is legitimate: specials live there.
-                    if episode > 0 {
+                    // Season 0 is legitimate (specials) and so is episode 0, so the
+                    // only marker that means nothing is S00E00.
+                    if season > 0 || episode > 0 {
                         return Some((season, episode, k));
                     }
                 }
@@ -456,7 +457,7 @@ pub fn episode_of(stem: &str) -> Option<(u32, u32, usize)> {
                     // Only when it is a whole token, so a film title like "2001x" is safe.
                     let before_ok =
                         i == 0 || !chars.get(i - 1).is_some_and(|c| c.is_alphanumeric());
-                    if episode > 0 && before_ok {
+                    if (season > 0 || episode > 0) && before_ok {
                         return Some((season, episode, k));
                     }
                 }
