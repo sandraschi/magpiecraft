@@ -41,6 +41,8 @@ impl ToolError {
 pub const ENV_FFPROBE: &str = "MAGPIECRAFT_FFPROBE";
 pub const ENV_SEVEN_ZIP: &str = "MAGPIECRAFT_7Z";
 pub const ENV_PDFCRAFT: &str = "MAGPIECRAFT_PDFCRAFT";
+/// ffmpeg, used to extract embedded subtitle streams (and, later, to remux).
+pub const ENV_FFMPEG: &str = "MAGPIECRAFT_FFMPEG";
 /// The player used for "open with player". A file path or a program name.
 pub const ENV_PLAYER: &str = "MAGPIECRAFT_PLAYER";
 
@@ -105,6 +107,7 @@ pub fn which(name: &str) -> Option<PathBuf> {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Toolchain {
     pub ffprobe: Option<PathBuf>,
+    pub ffmpeg: Option<PathBuf>,
     pub seven_zip: Option<PathBuf>,
     pub pdfcraft: Option<PathBuf>,
 }
@@ -113,6 +116,7 @@ impl Toolchain {
     pub fn detect() -> Self {
         Toolchain {
             ffprobe: find_tool(ENV_FFPROBE, &["ffprobe"], &[]),
+            ffmpeg: find_tool(ENV_FFMPEG, &["ffmpeg"], &[]),
             seven_zip: find_tool(
                 ENV_SEVEN_ZIP,
                 &["7z", "7za", "7zr"],
@@ -145,6 +149,7 @@ impl Toolchain {
         };
         serde_json::json!({
             "ffprobe": entry(&self.ffprobe, "technical inspection", "codec, resolution and stream details for video and audio"),
+            "ffmpeg": entry(&self.ffmpeg, "subtitle extraction", "pulling an embedded subtitle track out of a container"),
             "seven_zip": entry(&self.seven_zip, "CBR/RAR extraction", "reading CBR, RAR, CB7 and 7Z archives (Tier 2)"),
             "pdfcraft": entry(&self.pdfcraft, "PDF pages", "PDF page count and page rendering, via pdfcraft-cli (Tier 2)"),
         })
@@ -154,6 +159,9 @@ impl Toolchain {
         let mut v = Vec::new();
         if self.ffprobe.is_none() {
             v.push("ffprobe");
+        }
+        if self.ffmpeg.is_none() {
+            v.push("ffmpeg");
         }
         if self.seven_zip.is_none() {
             v.push("seven_zip");
@@ -508,8 +516,49 @@ pub fn ffprobe(tool: &Toolchain, path: &Path) -> ToolResult<MediaInfo> {
     parse_ffprobe(&out)
 }
 
-// ---------------------------------------------------------------- PdfCraft
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+// ---------------------------------------------------------------- ffmpeg
+/// Pull one embedded subtitle stream out of a container. `stream` is the index
+/// among subtitle streams (`0` is the first), not the global stream index.
+pub fn extract_subtitle(
+    tool: &Toolchain,
+    video: &Path,
+    stream: u32,
+    out: &Path,
+) -> ToolResult<PathBuf> {
+    let exe = tool
+        .ffmpeg
+        .as_ref()
+        .ok_or_else(|| ToolError::Missing("ffmpeg".to_string()))?;
+    if let Some(dir) = out.parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir).map_err(|e| ToolError::Io(e.to_string()))?;
+        }
+    }
+    let map = format!("0:s:{stream}");
+    run(
+        exe,
+        &[
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            &video.display().to_string(),
+            "-map",
+            &map,
+            &out.display().to_string(),
+        ],
+    )?;
+    if out.is_file() {
+        Ok(out.to_path_buf())
+    } else {
+        Err(ToolError::Failed(
+            "ffmpeg".to_string(),
+            format!("reported success but {} does not exist", out.display()),
+        ))
+    }
+}
+
+// ---------------------------------------------------------------- PdfCraft#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PdfInfo {
     pub pages: u32,
     pub path: String,
@@ -634,7 +683,7 @@ mod tests {
             ffprobe(&empty, Path::new("x.mkv")).unwrap_err().kind(),
             "not_configured"
         );
-        assert_eq!(empty.missing().len(), 3);
+        assert_eq!(empty.missing().len(), 4);
         let report = empty.report();
         assert_eq!(report["ffprobe"]["found"], serde_json::json!(false));
     }
