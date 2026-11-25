@@ -1217,6 +1217,24 @@ impl eframe::App for MagpieApp {
                             self.refresh();
                         }
                         Nav::Read(key) => self.open_reader(key),
+                        Nav::Launch(key) => match self.catalog.open_item(&key) {
+                            Ok(report) => {
+                                let player = report["player"].as_str().unwrap_or("player");
+                                let start = report["start_secs"].as_i64().unwrap_or(0);
+                                self.status = if start > 0 {
+                                    format!(
+                                        "opened in {player} at {}",
+                                        magpiecraft_core::format_secs(
+                                            u64::try_from(start).unwrap_or(0)
+                                        )
+                                    )
+                                } else {
+                                    format!("opened in {player}")
+                                };
+                                self.refresh();
+                            }
+                            Err(e) => self.status = format!("cannot open: {e}"),
+                        },
                         Nav::None => {}
                     }
                 }

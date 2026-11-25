@@ -15,8 +15,10 @@ const CARD_GAP: f32 = 12.0;
 pub enum Nav {
     /// Open a folder (None goes to the libraries overview).
     Open(Option<String>),
-    /// Open the reader for one item.
+    /// Open the reader for one item (comics, manga, magazines).
     Read(String),
+    /// Hand an item to the player or the OS handler (video, audio, book, photo).
+    Launch(String),
     None,
 }
 
@@ -107,16 +109,17 @@ pub fn show(
                 with_card(ui, |ui, width| {
                     let key = entry.get("key").and_then(Value::as_str).unwrap_or("");
                     let title = entry.get("title").and_then(Value::as_str).unwrap_or("");
-                    let page = entry.get("page").and_then(Value::as_i64).unwrap_or(0);
-                    let total = entry.get("total").and_then(Value::as_i64).unwrap_or(0);
+                    let label_text = entry.get("label").and_then(Value::as_str).unwrap_or("");
+                    let kind = entry.get("kind").and_then(Value::as_str).unwrap_or("other");
+                    let comicish = matches!(kind, "comics" | "manga" | "magazines");
                     cover(ui, width, key, covers, catalog, None);
-                    let label = if total > 0 {
-                        format!("{title}  p.{page}/{total}")
-                    } else {
-                        title.to_string()
-                    };
-                    if card_label(ui, &label, key).clicked() {
-                        nav = Nav::Read(key.to_string());
+                    let label = format!("{title}  {label_text}");
+                    if card_label(ui, &label, kind).clicked() {
+                        nav = if comicish {
+                            Nav::Read(key.to_string())
+                        } else {
+                            Nav::Launch(key.to_string())
+                        };
                     }
                 });
             }
@@ -191,7 +194,11 @@ pub fn show(
                     }
                     let sub = item_subtitle(item);
                     if card_label(ui, &item.title, &sub).clicked() {
-                        nav = Nav::Read(item.key.clone());
+                        nav = if item.kind.is_comicish() {
+                            Nav::Read(item.key.clone())
+                        } else {
+                            Nav::Launch(item.key.clone())
+                        };
                     }
                 });
             }

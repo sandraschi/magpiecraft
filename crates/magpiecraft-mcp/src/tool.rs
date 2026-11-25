@@ -78,11 +78,13 @@ pub fn tools() -> Value {
         tool(
             "media_read",
             "Reading surface. Operation volume: page count, readable flag and the first page names for one item \
-             (CBR/RAR and PDF report not_implemented in this build). page_offset: remember the difference between \
-             printed page numbers and scan order. rtl: set reading direction for one item. progress_get and \
-             progress_set: reading position.",
+             (CBR/RAR and PDF pages come through 7-Zip and PdfCraft). page_offset: remember the difference \
+             between printed page numbers and scan order. rtl: set reading direction for one item. \
+             progress_get and progress_set: reading position. page_export: write one page to a file. \
+             open: hand a film, track, book or photo to the user's player or OS handler, resuming where it \
+             left off. open runs a program on the user's machine; it never decodes media itself.",
             json!({
-                "operation": ops(&["volume", "page_offset", "rtl", "progress_get", "progress_set", "page_export"]),
+                "operation": ops(&["volume", "page_offset", "rtl", "progress_get", "progress_set", "page_export", "open"]),
                 "key": key,
                 "offset": { "type": "integer", "description": "page_offset: scan page minus printed page" },
                 "rtl": { "type": ["boolean", "null"], "description": "rtl: true, false, or null to clear" },
@@ -230,6 +232,11 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
                 page: opt_usize(args, "page")
                     .ok_or_else(|| "missing required integer argument: page".to_string())?,
                 out: req_str(args, "out")?,
+            },
+            // Launches a program on the user's own desktop. Not destructive, but it
+            // is the one read tool with a visible side effect, so it says so.
+            "open" => Command::OpenItem {
+                key: req_str(args, "key")?,
             },
             "page_offset" | "offset" => Command::PageOffset {
                 key: req_str(args, "key")?,

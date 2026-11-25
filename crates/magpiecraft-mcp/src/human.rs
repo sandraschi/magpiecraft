@@ -227,6 +227,18 @@ pub fn print(command: &str, value: &Value) {
             s(value, "out"),
             n(value, "bytes")
         ),
+        "open" => {
+            println!(
+                "opened {} in {}{}",
+                s(value, "title"),
+                s(value, "player"),
+                match n(value, "start_secs") {
+                    0 => String::new(),
+                    secs => format!(" at {}s", secs),
+                }
+            );
+            println!("  {}", s(value, "path"));
+        }
         "review" => {
             println!(
                 "{} item{} in the review queue ({} in total)",
@@ -452,9 +464,9 @@ pub fn print(command: &str, value: &Value) {
             }
             for e in &entries {
                 println!(
-                    "  p.{}/{:<6} {:<44} {}",
-                    n(e, "page"),
-                    n(e, "total"),
+                    "  {:<9} {:<14} {:<40} {}",
+                    s(e, "kind"),
+                    s(e, "label"),
                     s(e, "title"),
                     s(e, "key")
                 );

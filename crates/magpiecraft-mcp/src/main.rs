@@ -106,6 +106,8 @@ enum Cmd {
         #[arg(long)]
         out: String,
     },
+    /// Open an item in the player (video, audio) or the OS handler (books, photos).
+    Open { key: String },
     /// Set the printed-page offset of one item.
     Offset { key: String, value: i32 },
     /// Force or clear the reading direction of one item.
@@ -371,6 +373,10 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
                 page: *page,
                 out: out.clone(),
             };
+            (c.id(), c)
+        }
+        Cmd::Open { key } => {
+            let c = Command::OpenItem { key: key.clone() };
             (c.id(), c)
         }
         Cmd::Offset { key, value } => {
