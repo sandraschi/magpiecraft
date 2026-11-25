@@ -257,7 +257,7 @@ pub fn print(command: &str, value: &Value) {
                 }
             }
         }
-        "plan.rename" | "plan.quarantine" | "plan.cleanup" => {
+        "plan.rename" | "plan.quarantine" | "plan.cleanup" | "backup.plan" => {
             println!(
                 "{} operation{} planned ({} skipped)",
                 n(value, "operations"),

@@ -213,6 +213,19 @@ enum Cmd {
     },
     /// Where each library stands against the configured backup roots.
     Backup,
+    /// Build a verified backup copy plan (nothing is copied until applied).
+    BackupPlan {
+        /// Where the backup lives, for example E:\Media
+        #[arg(long)]
+        to: String,
+        library: Option<String>,
+        /// Size check only; skip the checksum of every copy.
+        #[arg(long)]
+        fast: bool,
+        /// 0 means every item.
+        #[arg(long, default_value_t = 0)]
+        limit: usize,
+    },
     /// Set (or clear) the backup roots.
     BackupRoots {
         roots: Vec<String>,
@@ -518,6 +531,20 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
             return Err("internal: command handled before the catalogue was opened".to_string())
         }
         Cmd::Backup => (Command::BackupStatus.id(), Command::BackupStatus),
+        Cmd::BackupPlan {
+            to,
+            library,
+            fast,
+            limit,
+        } => {
+            let c = Command::PlanBackup {
+                library: library.clone(),
+                to: to.clone(),
+                verify: !*fast,
+                limit: *limit,
+            };
+            (c.id(), c)
+        }
         Cmd::BackupRoots { roots, clear } => {
             let c = Command::BackupRoots {
                 roots: roots.clone(),

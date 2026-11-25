@@ -103,7 +103,7 @@ pub fn tools() -> Value {
              compare afterwards, and record every run. inspect: ffprobe technical details for one file. Files \
              are only ever read.",
             json!({
-                "operation": ops(&["duplicates", "hash", "manifest_write", "manifest_verify", "inspect", "verify_status", "verify_run", "backup_status", "near_duplicates"]),
+                "operation": ops(&["duplicates", "hash", "manifest_write", "manifest_verify", "inspect", "verify_status", "verify_run", "backup_status", "backup_plan", "near_duplicates"]),
                 "library": library,
                 "limit": { "type": "integer", "description": "duplicates: group cap (default 200)" },
                 "key": key,
@@ -111,7 +111,9 @@ pub fn tools() -> Value {
                 "manifest": { "type": "string", "description": "manifest_verify: manifest path" },
                 "path": { "type": "string", "description": "inspect: absolute path of a media file" },
                 "every_days": { "type": "integer", "description": "verify: re-check interval in days (default 30)" },
-                "force": { "type": "boolean", "description": "verify_run: verify even when not due" }
+                "force": { "type": "boolean", "description": "verify_run: verify even when not due" },
+                "to": { "type": "string", "description": "backup_plan: the backup root, e.g. E:/Media" },
+                "verify": { "type": "boolean", "description": "backup_plan: checksum every copy (default true)" }
             }),
             &["operation"]
         ),
@@ -287,6 +289,12 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
                 every_days: opt_i32(args, "every_days").map(i64::from).unwrap_or(30),
             },
             "backup_status" | "backup.status" => Command::BackupStatus,
+            "backup_plan" | "backup.plan" => Command::PlanBackup {
+                library: opt_str(args, "library"),
+                to: req_str(args, "to")?,
+                verify: opt_bool(args, "verify").unwrap_or(true),
+                limit: opt_usize(args, "limit").unwrap_or(0),
+            },
             "near_duplicates" | "near.duplicates" | "near_dupes" => Command::NearDuplicates {
                 limit: opt_usize(args, "limit").unwrap_or(200),
             },
