@@ -36,6 +36,12 @@ pub enum PlanOp {
         from: String,
         to: String,
     },
+    /// Run ffmpeg with a named preset, writing a new file. Undo deletes the output.
+    Encode {
+        from: String,
+        to: String,
+        preset: String,
+    },
     Write {
         to: String,
         content: String,
@@ -47,6 +53,7 @@ impl PlanOp {
         match self {
             PlanOp::Move { from, to } => format!("- {from}\n+ {to}"),
             PlanOp::Copy { from, to } => format!("copy {from}\n  -> {to}"),
+            PlanOp::Encode { from, to, preset } => format!("encode [{preset}] {from}\n  -> {to}"),
             PlanOp::Write { to, content } => {
                 format!("+ {to} ({} bytes)", content.len())
             }
@@ -55,14 +62,16 @@ impl PlanOp {
 
     pub fn source(&self) -> Option<&str> {
         match self {
-            PlanOp::Move { from, .. } | PlanOp::Copy { from, .. } => Some(from),
+            PlanOp::Move { from, .. } | PlanOp::Copy { from, .. } | PlanOp::Encode { from, .. } => {
+                Some(from)
+            }
             PlanOp::Write { .. } => None,
         }
     }
 
     pub fn target(&self) -> &str {
         match self {
-            PlanOp::Move { to, .. } | PlanOp::Copy { to, .. } => to,
+            PlanOp::Move { to, .. } | PlanOp::Copy { to, .. } | PlanOp::Encode { to, .. } => to,
             PlanOp::Write { to, .. } => to,
         }
     }
@@ -77,6 +86,7 @@ pub enum PlanKind {
     Nfo,
     Cleanup,
     Backup,
+    Convert,
 }
 
 impl PlanKind {
@@ -87,6 +97,7 @@ impl PlanKind {
             PlanKind::Nfo => "nfo",
             PlanKind::Cleanup => "cleanup",
             PlanKind::Backup => "backup",
+            PlanKind::Convert => "convert",
         }
     }
 
@@ -97,6 +108,7 @@ impl PlanKind {
             "nfo" => Some(PlanKind::Nfo),
             "cleanup" => Some(PlanKind::Cleanup),
             "backup" => Some(PlanKind::Backup),
+            "convert" => Some(PlanKind::Convert),
             _ => None,
         }
     }
@@ -1120,6 +1132,79 @@ impl Catalog {
         }))
     }
 
+    /// Build (but do not apply) a conversion plan for one item with a named preset.
+    pub fn plan_convert(
+        &mut self,
+        key: &str,
+        preset_id: &str,
+        out: Option<&str>,
+    ) -> MagpieResult<Value> {
+        let preset = crate::presets::get(preset_id).ok_or_else(|| {
+            MagpieError::invalid(format!(
+                "unknown preset {preset_id}; try remux-mkv, mp4-compat, loudnorm or strip-metadata"
+            ))
+        })?;
+        if self.tools().ffmpeg.is_none() {
+            return Err(MagpieError::NotImplemented(
+                "ffmpeg not found: install it or set MAGPIECRAFT_FFMPEG; presets run it as a subprocess"
+                    .to_string(),
+            ));
+        }
+        let (lib, row) = self.resolve_item(key)?;
+        let kind = crate::model::MediaKind::parse(&row.media_kind).unwrap_or_else(|| {
+            crate::model::MediaKind::parse(&lib.kind).unwrap_or(crate::model::MediaKind::Other)
+        });
+        if !matches!(
+            kind,
+            crate::model::MediaKind::Video | crate::model::MediaKind::Audio
+        ) {
+            return Err(MagpieError::invalid(format!(
+                "presets apply to video and audio, not {}",
+                kind.as_str()
+            )));
+        }
+        let from = root_join(&lib.root, &row.rel);
+        if !Path::new(&from).is_file() {
+            return Err(MagpieError::not_found(format!("{} is not on disk", from)));
+        }
+        let to = match out.filter(|o| !o.trim().is_empty()) {
+            Some(path) => PathBuf::from(path),
+            None => crate::presets::default_output(Path::new(&from), preset),
+        };
+        if to.exists() {
+            return Err(MagpieError::invalid(format!(
+                "{} already exists, refusing to overwrite",
+                to.display()
+            )));
+        }
+        let plan = Plan {
+            id: plan_id(),
+            created_at: now(),
+            kind: PlanKind::Convert.as_str().to_string(),
+            library: lib.name.clone(),
+            library_id: lib.id,
+            root: lib.root.clone(),
+            ops: vec![PlanOp::Encode {
+                from,
+                to: to.display().to_string(),
+                preset: preset.id.to_string(),
+            }],
+            skipped: Vec::new(),
+            bytes: u64::try_from(row.size).unwrap_or(0),
+            verify: false,
+        };
+        self.save_plan(&plan)?;
+        Ok(json!({
+            "ok": true,
+            "kind": "convert",
+            "plans": vec![plan_summary(&plan)],
+            "operations": plan.ops.len(),
+            "preset": preset.id,
+            "lossless": preset.lossless,
+            "note": "nothing has changed; apply with confirm=true. ffmpeg writes a new file and undo deletes it",
+        }))
+    }
+
     /// Build a quarantine plan for one item: a move into the app's quarantine folder,
     /// never a delete.
     pub fn plan_quarantine(&mut self, key: &str) -> MagpieResult<Value> {
@@ -1219,6 +1304,16 @@ impl Catalog {
                         error: result.err(),
                     });
                 }
+                PlanOp::Encode { from, to, preset } => {
+                    let result = run_encode(self.tools(), Path::new(from), Path::new(to), preset);
+                    journal_ops.push(JournalOp {
+                        op: "encode".to_string(),
+                        from: Some(from.clone()),
+                        to: to.clone(),
+                        ok: result.is_ok(),
+                        error: result.err(),
+                    });
+                }
                 PlanOp::Write { to, content } => {
                     let result = write_sidecar(Path::new(to), content);
                     journal_ops.push(JournalOp {
@@ -1259,7 +1354,7 @@ impl Catalog {
         // A scan rebuilds folders and series for the new layout. It is incremental,
         // so it does not reopen the archives it already knows. A backup plan changes
         // nothing in the library, so it does not need one.
-        let scan = if plan.kind == PlanKind::Backup.as_str() {
+        let scan = if matches!(plan.kind.as_str(), "backup" | "convert") {
             None
         } else {
             self.scan(Some(&plan.library), false).ok()
@@ -1365,9 +1460,9 @@ impl Catalog {
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                     Err(e) => problems.push(format!("{}: {e}", op.to)),
                 },
-                // Undoing a backup copy removes the copy. The source was never
-                // touched, so the library is exactly as it was.
-                "copy" => match std::fs::remove_file(&op.to) {
+                // Undoing a backup copy or an encode removes the output. The source
+                // was never touched, so the library is exactly as it was.
+                "copy" | "encode" => match std::fs::remove_file(&op.to) {
                     Ok(()) => restored += 1,
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                     Err(e) => problems.push(format!("{}: {e}", op.to)),
@@ -1389,7 +1484,7 @@ impl Catalog {
         journal.undone = true;
         journal.undone_at = Some(now());
         self.save_journal(&journal)?;
-        let scan = if journal.kind == PlanKind::Backup.as_str() {
+        let scan = if matches!(journal.kind.as_str(), "backup" | "convert") {
             None
         } else {
             self.scan(Some(&journal.library), false).ok()
@@ -1450,6 +1545,76 @@ fn move_file(from: &Path, to: &Path) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     std::fs::rename(from, to).map_err(|e| format!("{}: {e}", from.display()))
+}
+
+/// Run one ffmpeg preset. ffmpeg is a subprocess: nothing is linked, and a failure
+/// leaves no half-written file behind.
+fn run_encode(
+    tools: &magpiecraft_tools::Toolchain,
+    from: &Path,
+    to: &Path,
+    preset_id: &str,
+) -> Result<(), String> {
+    let preset =
+        crate::presets::get(preset_id).ok_or_else(|| format!("unknown preset {preset_id}"))?;
+    if !from.is_file() {
+        return Err(format!("{} does not exist", from.display()));
+    }
+    if to.exists() {
+        return Err(format!(
+            "{} already exists, refusing to overwrite",
+            to.display()
+        ));
+    }
+    let exe = tools
+        .ffmpeg
+        .as_ref()
+        .ok_or_else(|| "ffmpeg not found; install it or set MAGPIECRAFT_FFMPEG".to_string())?;
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let args = crate::presets::encode_args(preset, from, to);
+    let output = std::process::Command::new(exe)
+        .arg("-y")
+        .arg("-loglevel")
+        .arg("error")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("{}: {e}", exe.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let _ = std::fs::remove_file(to);
+        return Err(format!(
+            "ffmpeg failed on {}: {}",
+            from.display(),
+            stderr.trim()
+        ));
+    }
+    if !to.is_file() {
+        return Err(format!(
+            "ffmpeg reported success but {} was not written",
+            to.display()
+        ));
+    }
+    // A file that ffprobe cannot parse is not an output worth keeping.
+    if tools.ffprobe.is_some() {
+        match magpiecraft_tools::ffprobe(tools, to) {
+            Ok(info) if info.duration_seconds.unwrap_or(0.0) > 0.0 => Ok(()),
+            Ok(_) => {
+                let _ = std::fs::remove_file(to);
+                Err(format!(
+                    "{} has no duration; the encode is not usable",
+                    to.display()
+                ))
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(to);
+                Err(format!("{} does not probe as media: {e}", to.display()))
+            }
+        }
+    } else {
+        Ok(())
+    }
 }
 
 fn write_sidecar(to: &Path, content: &str) -> Result<(), String> {

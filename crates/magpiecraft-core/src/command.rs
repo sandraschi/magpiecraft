@@ -158,6 +158,14 @@ pub enum Command {
         subtitle_index: u32,
         out: String,
     },
+    /// The ffmpeg preset catalogue.
+    Presets,
+    /// Build (but do not apply) a conversion plan for one item.
+    PlanConvert {
+        key: String,
+        preset: String,
+        out: Option<String>,
+    },
     /// Build (but do not apply) a verified backup copy plan.
     PlanBackup {
         library: Option<String>,
@@ -236,6 +244,8 @@ impl Command {
             Command::SubsShift { .. } => "subs.shift",
             Command::SubsConvert { .. } => "subs.convert",
             Command::SubsExtract { .. } => "subs.extract",
+            Command::Presets => "presets",
+            Command::PlanConvert { .. } => "convert.plan",
             Command::PlanRename { .. } => "plan.rename",
             Command::PlanQuarantine { .. } => "plan.quarantine",
             Command::PlanCleanup { .. } => "plan.cleanup",
@@ -372,6 +382,10 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
             subtitle_index,
             out,
         } => catalog.subs_extract(&key, subtitle_index, &out),
+        Command::Presets => Ok(catalog.presets()),
+        Command::PlanConvert { key, preset, out } => {
+            catalog.plan_convert(&key, &preset, out.as_deref())
+        }
         Command::PlanRename {
             library,
             preset,

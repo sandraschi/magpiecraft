@@ -14,6 +14,7 @@ pub mod images;
 pub mod model;
 pub mod neardupe;
 pub mod organise;
+pub mod presets;
 pub mod subs;
 pub mod verify;
 
