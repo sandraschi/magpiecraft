@@ -4,7 +4,7 @@
 //! block and bump `SCHEMA_VERSION`. Every statement here is `IF NOT EXISTS`, so a
 //! fresh file and an existing file both end up valid.
 
-pub const SCHEMA_VERSION: &str = "4";
+pub const SCHEMA_VERSION: &str = "5";
 
 /// Additive step from schema 1 to 2: the review queue needs to know how confident
 /// the filename parse was, and whether a human should look at it.
@@ -29,6 +29,13 @@ UPDATE items
        (SELECT kind FROM libraries WHERE libraries.id = items.library_id),
        'other')
  WHERE media_kind = '';
+"#;
+
+/// Additive step from schema 4 to 5: films and tracks resume in seconds, not pages.
+pub const MIGRATE_4_TO_5: &str = r#"
+ALTER TABLE items ADD COLUMN duration_secs INTEGER;
+ALTER TABLE progress ADD COLUMN position_secs INTEGER;
+ALTER TABLE progress ADD COLUMN duration_secs INTEGER;
 "#;
 
 pub const SCHEMA_SQL: &str = r#"

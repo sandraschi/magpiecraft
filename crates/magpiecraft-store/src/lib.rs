@@ -132,6 +132,10 @@ pub struct ProgressRow {
     pub key: String,
     pub page: i64,
     pub total: i64,
+    /// Playback position in seconds, for films and tracks.
+    pub position_secs: Option<i64>,
+    /// Duration in seconds, when known.
+    pub duration_secs: Option<i64>,
     pub finished: bool,
     pub title: Option<String>,
     pub updated_at: String,
@@ -228,6 +232,12 @@ impl Store {
             store
                 .conn
                 .execute_batch(schema::MIGRATE_3_TO_4)
+                .map_err(StoreError::sqlite)?;
+        }
+        if version < 5 {
+            store
+                .conn
+                .execute_batch(schema::MIGRATE_4_TO_5)
                 .map_err(StoreError::sqlite)?;
         }
         store.set_meta("schema_version", SCHEMA_VERSION)?;
@@ -1053,7 +1063,8 @@ impl Store {
     pub fn progress_get(&self, key: &str) -> StoreResult<Option<ProgressRow>> {
         self.conn
             .query_row(
-                "SELECT key, page, total, finished, title, updated_at FROM progress WHERE key = ?1",
+                "SELECT key, page, total, finished, title, updated_at, position_secs, duration_secs
+                 FROM progress WHERE key = ?1",
                 params![key],
                 |r| {
                     Ok(ProgressRow {
@@ -1063,6 +1074,8 @@ impl Store {
                         finished: r.get::<_, i32>(3)? != 0,
                         title: r.get(4)?,
                         updated_at: r.get(5)?,
+                        position_secs: r.get(6)?,
+                        duration_secs: r.get(7)?,
                     })
                 },
             )
@@ -1070,11 +1083,72 @@ impl Store {
             .map_err(StoreError::sqlite)
     }
 
+    /// Remember where a film or a track was left, in seconds. Page fields stay zero
+    /// so a comic's position is never confused with a film's.
+    pub fn progress_set_position(
+        &mut self,
+        key: &str,
+        position_secs: i64,
+        duration_secs: Option<i64>,
+        title: Option<&str>,
+    ) -> StoreResult<()> {
+        let position = position_secs.max(0);
+        let finished = duration_secs
+            .map(|d| d > 0 && position * 100 / d >= 95)
+            .unwrap_or(false);
+        self.conn
+            .execute(
+                "INSERT INTO progress(key, page, total, finished, title, updated_at,
+                     position_secs, duration_secs)
+                 VALUES(?1, 0, 0, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(key) DO UPDATE SET
+                     finished = excluded.finished,
+                     title = COALESCE(excluded.title, progress.title),
+                     updated_at = excluded.updated_at,
+                     position_secs = excluded.position_secs,
+                     duration_secs = COALESCE(excluded.duration_secs, progress.duration_secs)",
+                params![
+                    key,
+                    i32::from(finished),
+                    title,
+                    now(),
+                    position,
+                    duration_secs
+                ],
+            )
+            .map_err(StoreError::sqlite)?;
+        Ok(())
+    }
+
+    /// Cached duration of an item, in seconds, when one has been probed.
+    pub fn item_duration(&self, id: i64) -> StoreResult<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT duration_secs FROM items WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map(|v| v.flatten())
+            .map_err(StoreError::sqlite)
+    }
+
+    pub fn set_item_duration(&mut self, id: i64, secs: i64) -> StoreResult<()> {
+        self.conn
+            .execute(
+                "UPDATE items SET duration_secs = ?2 WHERE id = ?1",
+                params![id, secs],
+            )
+            .map_err(StoreError::sqlite)?;
+        Ok(())
+    }
+
     pub fn continue_reading(&self, limit: usize) -> StoreResult<Vec<ProgressRow>> {
         let mut st = self
             .conn
             .prepare(
-                "SELECT key, page, total, finished, title, updated_at FROM progress
+                "SELECT key, page, total, finished, title, updated_at, position_secs, duration_secs
+                 FROM progress
                  WHERE finished = 0 ORDER BY updated_at DESC LIMIT ?1",
             )
             .map_err(StoreError::sqlite)?;
@@ -1087,6 +1161,8 @@ impl Store {
                     finished: r.get::<_, i32>(3)? != 0,
                     title: r.get(4)?,
                     updated_at: r.get(5)?,
+                    position_secs: r.get(6)?,
+                    duration_secs: r.get(7)?,
                 })
             })
             .map_err(StoreError::sqlite)?
