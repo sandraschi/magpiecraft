@@ -136,6 +136,28 @@ pub enum Command {
     NearDuplicates {
         limit: usize,
     },
+    /// Subtitle sidecars and embedded tracks for one item.
+    Subs {
+        key: String,
+    },
+    /// Shift a subtitle file by seconds into a new file.
+    SubsShift {
+        path: String,
+        seconds: f64,
+        out: Option<String>,
+    },
+    /// Convert a subtitle file to srt or vtt into a new file.
+    SubsConvert {
+        path: String,
+        to: String,
+        out: Option<String>,
+    },
+    /// Extract an embedded subtitle stream with ffmpeg.
+    SubsExtract {
+        key: String,
+        subtitle_index: u32,
+        out: String,
+    },
     /// Build (but do not apply) a verified backup copy plan.
     PlanBackup {
         library: Option<String>,
@@ -210,6 +232,10 @@ impl Command {
             Command::BackupRoots { .. } => "backup.roots",
             Command::NearDuplicates { .. } => "dupes.near",
             Command::PlanBackup { .. } => "backup.plan",
+            Command::Subs { .. } => "subs",
+            Command::SubsShift { .. } => "subs.shift",
+            Command::SubsConvert { .. } => "subs.convert",
+            Command::SubsExtract { .. } => "subs.extract",
             Command::PlanRename { .. } => "plan.rename",
             Command::PlanQuarantine { .. } => "plan.quarantine",
             Command::PlanCleanup { .. } => "plan.cleanup",
@@ -336,6 +362,16 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
             verify,
             limit,
         } => catalog.plan_backup(library.as_deref(), &to, verify, limit),
+        Command::Subs { key } => catalog.subs_list(&key),
+        Command::SubsShift { path, seconds, out } => {
+            catalog.subs_shift(&path, seconds, out.as_deref())
+        }
+        Command::SubsConvert { path, to, out } => catalog.subs_convert(&path, &to, out.as_deref()),
+        Command::SubsExtract {
+            key,
+            subtitle_index,
+            out,
+        } => catalog.subs_extract(&key, subtitle_index, &out),
         Command::PlanRename {
             library,
             preset,
