@@ -152,6 +152,24 @@ Remaining in Tier 3: the verified backup copy, ffmpeg presets, subtitle tools, S
 
 180 tests, clippy and fmt clean. Remaining in Tier 3: SMART drive health, local subtitle generation.
 
+## Tier 3, sixth slice: skins (2026-11-25)
+
+Sandra: "make it more beautiful. look at djcraft". Built the equivalent of djcraft's skin system,
+fitted to a collector: three curated skins (Magpie Ink, Paper Library, Neon Shelf), per-kind accent
+colours, card shadows, procedural backdrops and a reader progress bar.
+
+- Skin is authoritative: one id in settings, the theme string follows it, old dark/light names map
+  to the default skins. Picker in Settings with painted swatches, `View > Skin`, command palette,
+  `--skin` flag, MCP `settings_set skin`.
+- Contrast locked per skin in tests: primary 7:1, secondary 4.5:1 on canvas and card; kind accents
+  distinct and readable on cards.
+- Two real bugs found on camera: the backdrop painted the whole window and covered the menu bar
+  (now scoped to the page rect), and eframe's default clear colour framed the light skin in black
+  (now overridden from the palette).
+
+184 tests, clippy and fmt clean. Remaining in Tier 3: SMART drive health, local subtitle generation
+(Rust engine only).
+
 ## Tier 3, fourth slice: subtitles
 
 - `subs`, `subs-shift`, `subs-convert`, `subs-extract`: sidecar discovery, signed cue shifting, SRT to
