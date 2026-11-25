@@ -4,6 +4,7 @@
 //! the command bus shared by the CLI, the MCP server and the desktop app. No UI,
 //! no CLI parser, no MCP framing: those live in the L2 and L3 crates.
 
+pub mod backup;
 pub mod catalog;
 pub mod command;
 pub mod config;
@@ -12,6 +13,7 @@ pub mod error;
 pub mod images;
 pub mod model;
 pub mod organise;
+pub mod verify;
 
 pub use catalog::{Catalog, SearchMode};
 pub use command::{dispatch, Command};

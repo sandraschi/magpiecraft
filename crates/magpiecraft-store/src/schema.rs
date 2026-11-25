@@ -4,7 +4,7 @@
 //! block and bump `SCHEMA_VERSION`. Every statement here is `IF NOT EXISTS`, so a
 //! fresh file and an existing file both end up valid.
 
-pub const SCHEMA_VERSION: &str = "5";
+pub const SCHEMA_VERSION: &str = "6";
 
 /// Additive step from schema 1 to 2: the review queue needs to know how confident
 /// the filename parse was, and whether a human should look at it.
@@ -36,6 +36,23 @@ pub const MIGRATE_4_TO_5: &str = r#"
 ALTER TABLE items ADD COLUMN duration_secs INTEGER;
 ALTER TABLE progress ADD COLUMN position_secs INTEGER;
 ALTER TABLE progress ADD COLUMN duration_secs INTEGER;
+"#;
+
+/// Additive step from schema 5 to 6: checksum verifications are recorded per run so
+/// "what is due" is a query, not a guess.
+pub const MIGRATE_5_TO_6: &str = r#"
+CREATE TABLE IF NOT EXISTS verifications (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    library_id INTEGER NOT NULL,
+    checked_at TEXT NOT NULL,
+    checked    INTEGER NOT NULL,
+    ok         INTEGER NOT NULL,
+    missing    INTEGER NOT NULL,
+    changed    INTEGER NOT NULL,
+    baseline   INTEGER NOT NULL DEFAULT 0,
+    ms         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_verifications_library ON verifications(library_id, checked_at);
 "#;
 
 pub const SCHEMA_SQL: &str = r#"

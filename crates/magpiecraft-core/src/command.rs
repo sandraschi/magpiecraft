@@ -115,6 +115,23 @@ pub enum Command {
         library: Option<String>,
         limit: usize,
     },
+    /// What checksum verification is due, per library.
+    VerifyStatus {
+        every_days: i64,
+    },
+    /// Verify the libraries that are due (the first run writes the baseline).
+    VerifyRun {
+        library: Option<String>,
+        every_days: i64,
+        force: bool,
+    },
+    /// Where each library stands against the configured backup roots.
+    BackupStatus,
+    /// Set or clear the backup roots.
+    BackupRoots {
+        roots: Vec<String>,
+        clear: bool,
+    },
     /// Build (but do not apply) a rename plan.
     PlanRename {
         library: Option<String>,
@@ -124,6 +141,10 @@ pub enum Command {
     /// Build (but do not apply) a quarantine plan for one item.
     PlanQuarantine {
         key: String,
+    },
+    /// Build (but do not apply) a cleanup plan: empty folders, orphans, samples, junk.
+    PlanCleanup {
+        library: Option<String>,
     },
     Plans,
     /// Apply a saved plan. Requires confirm.
@@ -172,8 +193,13 @@ impl Command {
             Command::Settings => "settings",
             Command::SettingsSet { .. } => "settings.set",
             Command::Review { .. } => "review",
+            Command::VerifyStatus { .. } => "verify.status",
+            Command::VerifyRun { .. } => "verify.run",
+            Command::BackupStatus => "backup.status",
+            Command::BackupRoots { .. } => "backup.roots",
             Command::PlanRename { .. } => "plan.rename",
             Command::PlanQuarantine { .. } => "plan.quarantine",
+            Command::PlanCleanup { .. } => "plan.cleanup",
             Command::Plans => "plans",
             Command::ApplyPlan { .. } => "apply",
             Command::Journals => "journals",
@@ -282,12 +308,21 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
             to_value(catalog.set_settings(settings)?)
         }
         Command::Review { library, limit } => catalog.review(library.as_deref(), limit),
+        Command::VerifyStatus { every_days } => catalog.verify_status(every_days),
+        Command::VerifyRun {
+            library,
+            every_days,
+            force,
+        } => catalog.verify_run(library.as_deref(), every_days, force),
+        Command::BackupStatus => catalog.backup_status(),
+        Command::BackupRoots { roots, clear } => catalog.set_backup_roots(&roots, clear),
         Command::PlanRename {
             library,
             preset,
             limit,
         } => catalog.plan_rename(library.as_deref(), &preset, limit),
         Command::PlanQuarantine { key } => catalog.plan_quarantine(&key),
+        Command::PlanCleanup { library } => catalog.plan_cleanup(library.as_deref()),
         Command::Plans => catalog.plans(),
         Command::ApplyPlan { id, confirm } => catalog.apply_plan(&id, confirm),
         Command::Journals => catalog.journals(),

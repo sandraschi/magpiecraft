@@ -240,6 +240,12 @@ impl Store {
                 .execute_batch(schema::MIGRATE_4_TO_5)
                 .map_err(StoreError::sqlite)?;
         }
+        if version < 6 {
+            store
+                .conn
+                .execute_batch(schema::MIGRATE_5_TO_6)
+                .map_err(StoreError::sqlite)?;
+        }
         store.set_meta("schema_version", SCHEMA_VERSION)?;
         Ok(store)
     }
@@ -1405,6 +1411,52 @@ impl Store {
         Ok(out.into_iter().next())
     }
 
+    /// Record one checksum verification run, so "what is due" becomes a query.
+    pub fn record_verification(&mut self, row: &VerificationRow) -> StoreResult<()> {
+        self.conn
+            .execute(
+                "INSERT INTO verifications(library_id, checked_at, checked, ok, missing, changed,
+                     baseline, ms)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    row.library_id,
+                    row.checked_at,
+                    i64::try_from(row.checked).unwrap_or(i64::MAX),
+                    i64::try_from(row.ok).unwrap_or(i64::MAX),
+                    i64::try_from(row.missing).unwrap_or(i64::MAX),
+                    i64::try_from(row.changed).unwrap_or(i64::MAX),
+                    i32::from(row.baseline),
+                    i64::try_from(row.ms).unwrap_or(i64::MAX)
+                ],
+            )
+            .map_err(StoreError::sqlite)?;
+        Ok(())
+    }
+
+    pub fn last_verification(&self, library_id: i64) -> StoreResult<Option<VerificationRow>> {
+        self.conn
+            .query_row(
+                "SELECT library_id, checked_at, checked, ok, missing, changed, baseline, ms
+                 FROM verifications WHERE library_id = ?1 ORDER BY id DESC LIMIT 1",
+                params![library_id],
+                |r| {
+                    let to_usize = |v: i64| usize::try_from(v.max(0)).unwrap_or(usize::MAX);
+                    Ok(VerificationRow {
+                        library_id: r.get(0)?,
+                        checked_at: r.get(1)?,
+                        checked: to_usize(r.get(2)?),
+                        ok: to_usize(r.get(3)?),
+                        missing: to_usize(r.get(4)?),
+                        changed: to_usize(r.get(5)?),
+                        baseline: r.get::<_, i32>(6)? != 0,
+                        ms: to_usize(r.get(7)?),
+                    })
+                },
+            )
+            .optional()
+            .map_err(StoreError::sqlite)
+    }
+
     pub fn record_scan(&mut self, rec: &ScanRecord) -> StoreResult<i64> {
         self.conn
             .execute(
@@ -1425,6 +1477,20 @@ impl Store {
             .map_err(StoreError::sqlite)?;
         Ok(self.conn.last_insert_rowid())
     }
+}
+
+/// One checksum verification run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationRow {
+    pub library_id: i64,
+    pub checked_at: String,
+    pub checked: usize,
+    pub ok: usize,
+    pub missing: usize,
+    pub changed: usize,
+    /// True when the run created the manifest instead of comparing against it.
+    pub baseline: bool,
+    pub ms: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
