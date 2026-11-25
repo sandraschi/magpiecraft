@@ -15,6 +15,7 @@ param(
     [string]$OutDir = "",
     [string]$Key = "",
     [string]$DataHome = "",
+    [string]$Page = "",
     [string]$Name = "browse",
     [string]$Keys = "",
     [int]$WaitSeconds = 12
@@ -57,6 +58,7 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $appArgs = @()
 if ($DataHome) { $appArgs += @("--home", $DataHome) }
 if ($Key) { $appArgs += @("--key", $Key) }
+if ($Page) { $appArgs += @("--page", $Page) }
 $argLine = ($appArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
 $proc = Start-Process -FilePath $Exe -ArgumentList $argLine -PassThru -WindowStyle Normal
 

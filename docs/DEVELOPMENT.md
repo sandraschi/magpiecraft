@@ -25,7 +25,7 @@ cargo test --workspace
 cargo run -q -p magpiecraft-app -- --smoke
 ```
 
-Expected: 152 tests pass (2026-11-25), clippy clean with the deny gates, fmt clean.
+Expected: 184 tests pass (2026-11-25), clippy clean with the deny gates, fmt clean.
 
 Probe the MCP surface after any change to tools or the command bus:
 
@@ -51,6 +51,17 @@ magpiecraft-mcp --home data/demo-home scan
 cargo build --release -p magpiecraft-app
 pwsh -File scripts/capture-window.ps1 -DataHome data/demo-home -Key "lib:1|" -Name library-grid
 pwsh -File scripts/capture-window.ps1 -DataHome data/demo-home -Key "lib:1|Neon Tales/Neon Tales v01 The Long Night.cbz" -Name reader-page
+```
+
+Skins are captured the same way, after switching the skin in that home (themes are per
+settings file, so the demo home keeps whatever was set last):
+
+```powershell
+magpiecraft-mcp --home data/demo-home set-settings --skin neon-shelf
+pwsh -File scripts/capture-window.ps1 -DataHome data/demo-home -Key "lib:1|" -Name skins-neon-grid
+magpiecraft-mcp --home data/demo-home set-settings --skin paper-library
+pwsh -File scripts/capture-window.ps1 -DataHome data/demo-home -Key "lib:1|Neon Tales" -Name skins-paper-volumes
+pwsh -File scripts/capture-window.ps1 -DataHome data/demo-home -Page settings -Name skins-settings
 ```
 
 `capture-window.ps1` marks itself DPI aware first. Without that, `GetWindowRect` returns virtualised

@@ -67,11 +67,10 @@ The same flow from the CLI: `plan-rename`, read the diff, `apply <id> --confirm`
 
 The app is honest about this rather than showing an empty page:
 
-- CBR, RAR, CB7 and 7Z are indexed with their size and title, but page reading is not built. The
-  message says so.
-- PDF page counts come from PdfCraft; page rendering in the reader is next.
+- CBR, RAR, CB7 and 7Z read through 7-Zip; PDF pages render through PdfCraft.
 - AVIF images are indexed, and the decoder is a pending decision.
-- No identify/tag/rename yet, no NFO or artwork, no conversions, no remote servers.
+- Identify from metadata, NFO and artwork, and tag writing are the next Tier 2 remainder; renames,
+  quarantine and verified backups already work as plans with diffs and undo.
 
 ## Settings
 
@@ -79,9 +78,19 @@ The app is honest about this rather than showing an empty page:
 
 - Show mature-flagged libraries (off by default; they are also excluded from search while off).
 - Images needed for a folder to count as a volume (default 3).
-- Theme and zoom.
+- Skin: Magpie Ink, Paper Library or Neon Shelf, each with a painted preview. Everything repaints
+  at once: palettes, kind colours, card shadows and the backdrop.
+- Zoom (or Ctrl + mouse wheel anywhere, 60 to 250 percent).
 
 Storage paths are listed there too. Deleting the cache folder is always safe.
+
+## Skins
+
+`View > Skin`, the command palette ("Skin: ..."), `set-settings --skin <id>` or MCP
+`media_catalog settings_set skin`: `magpie-ink` (high-contrast dark, the default), `paper-library`
+(warm paper light) and `neon-shelf` (black glass with neon glow). The old `dark`/`light` theme names
+still work everywhere and map to the default skin of that mode. Every skin is contrast-checked:
+primary text 7:1, secondary text 4.5:1, on canvas and on cards.
 
 ## Where things live
 

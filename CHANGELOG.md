@@ -22,6 +22,29 @@ Added:
 
 Still planned in Tier 3: SMART drive health, local subtitle generation (Rust engine only).
 
+## 0.9.0 - 2026-11-25 (Tier 3: skins)
+
+The beauty pass, modelled on djcraft's skin system but built for a collector, not a club.
+
+Added:
+
+- **Three curated skins**: Magpie Ink (high-contrast dark, the default), Paper Library (warm paper
+  light, for daylight cataloguing), Neon Shelf (black glass with neon glow). `View > Skin`, the
+  command palette, `set-settings --skin`, or MCP `settings_set skin`. The skin is authoritative:
+  `theme` follows it, and the old `--theme` flag maps to the default skin of that mode.
+- **Per-kind accent colours** (comics orange, manga pink, video azure, ...), used for cover stripes,
+  kind dots and glows; never for body text, so neon stays legal on any card.
+- **Card shadows and rounded corners** (drop shadow on Ink and Paper, neon glow on Neon Shelf),
+  kind-striped covers, breadcrumb kind chips, ruled section headers, and a thin accent progress bar
+  under the reader toolbar.
+- **Procedural backdrops**: book-cloth weave on Ink, sparse starfield dots on Neon, solid paper.
+  Painted only inside the page area, never over the menu bar (that bug was caught on camera and is
+  fixed).
+- Every skin locks the fleet contrast rule in a test: primary text 7:1 (AAA) and secondary text
+  4.5:1 (AA) on canvas and card; kind accents stay distinct and readable on a card.
+
+Still planned in Tier 3: SMART drive health, local subtitle generation (Rust engine only).
+
 ## 0.8.0 - 2026-11-25 (Tier 3: subtitles)
 
 Added:

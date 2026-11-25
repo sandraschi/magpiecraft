@@ -29,6 +29,16 @@ command bus in process.
 |---|
 | ![Video library](docs/screenshots/library-video.png) |
 
+| Skins: Neon Shelf grid, Paper Library volumes, Neon reader |
+|---|
+| ![Neon grid](docs/screenshots/skins-neon-grid.png) |
+| ![Paper volumes](docs/screenshots/skins-paper-volumes.png) |
+| ![Neon reader](docs/screenshots/skins-neon-reader.png) |
+
+| Organise with the skin picker open |
+|---|
+| ![Skin picker](docs/screenshots/skins-settings.png) |
+
 Screenshots come from the synthetic demo library (`scripts/make-demo-library.ps1`), never from a real
 collection, so no copyrighted page is published. How to reproduce them: `docs/DEVELOPMENT.md`.
 
@@ -142,7 +152,8 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Reader: prefetch and decode off the UI thread | Implemented |
 | Open with player: resume position, player discovery, continue row for films | Implemented |
 | Built-in decoder, subtitle rendering, transcoding, streaming server | Not built, by decision D8 |
-| Ctrl + wheel zoom, dark and light high-contrast themes | Implemented |
+| Ctrl + wheel zoom; three curated skins (Magpie Ink, Paper Library, Neon Shelf) | Implemented |
+| Per-kind accent colours, card shadows, procedural backdrops | Implemented |
 | CLI with `--json` | Implemented |
 | MCP stdio server: `media_catalog`, `media_search`, `media_read`, `media_health` | Implemented |
 | OPDS server, static site export | Planned (Tier 2/3) |
@@ -199,7 +210,7 @@ Full instructions, including the data directory and environment variables: [INST
 | Path | What |
 |---|---|
 | `catalogue.db` | Libraries, items, series, progress, FTS index |
-| `settings.json` | Theme, zoom, mature visibility, page-folder threshold |
+| `settings.json` | Skin, zoom, mature visibility, page-folder threshold |
 | `cache/covers` | Cover thumbnails, rendered from your files |
 | `manifests` | Checksum manifests |
 

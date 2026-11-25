@@ -54,7 +54,7 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `apply <plan-id> --confirm` | Apply a plan; refused without `--confirm` |
 | `journals` | Applied plans and their outcome |
 | `undo <journal-id> --confirm` | Reverse an applied plan, including reading progress |
-| `settings` / `set-settings [--mature true] [--imgdir-min-pages N] [--theme dark] [--zoom 1.2]` | Read or change settings |
+| `settings` / `set-settings [--mature true] [--imgdir-min-pages N] [--skin neon-shelf] [--zoom 1.2]` | Read or change settings (`--theme dark|light` still works and maps to the default skin) |
 | `bench-scan [--files N] [--dir path]` | Synthetic scan benchmark, writes only under the data home |
 | `mcp` | MCP stdio server |
 
@@ -95,7 +95,7 @@ go to stderr. Five compound tools, all read-first except the explicitly confirme
 | `library_add` | `name`, `root`, `kind`, `mature`, `rtl` | The new library |
 | `library_remove` | `name`, `confirm=true` | Rows dropped; files untouched |
 | `settings` | - | Current settings |
-| `settings_set` | `mature_visible`, `imgdir_min_pages`, `theme`, `zoom` | Saved settings |
+| `settings_set` | `mature_visible`, `imgdir_min_pages`, `skin`, `theme`, `zoom` | Saved settings (skin wins over theme) |
 
 ### `media_search`
 

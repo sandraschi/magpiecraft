@@ -310,6 +310,25 @@ The desktop app calls the engine in process. The MCP server speaks stdio. There 
 surface, so nothing has to be registered, firewalled or port-claimed. An opt-in OPDS listener is a Tier
 2 decision and would be the only exception.
 
+## Skins, kind colours and backdrops
+
+Three curated skins live in `magpiecraft-app::skins`, after djcraft's skin engine but fitted to a
+collector: Magpie Ink (high-contrast dark), Paper Library (warm paper light) and Neon Shelf (black
+glass with neon glow). A skin is the whole visual identity: canvas, card, border, text, accent, one
+colour per media kind, a card decor (drop shadow or neon glow) and a procedural backdrop (book-cloth
+weave, starfield dots, or solid).
+
+Rules that keep it honest:
+
+- The palette is the *only* source of colour. Nothing in the UI hard-codes a grey that could strand a
+  light skin on a dark text or vice versa.
+- Kind colours are for stripes, dots and glows, never body text: a neon stays legal on any card.
+- Backdrops paint inside the page rect only. Painting the whole window covers the menu bar (found on
+  camera, during this build).
+- The window clear colour comes from the palette too, because eframe's default is hard-coded
+  near-black and would frame a light skin in black.
+- Contrast is locked per skin in a test: primary text 7:1, secondary 4.5:1, on canvas and on cards.
+
 ## Failure behaviour
 
 - Opening the catalogue fails loudly; no silent fallback to memory.
