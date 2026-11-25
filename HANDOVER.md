@@ -104,6 +104,25 @@ implemented as a dead end. Now:
 Next in Tier 3: perceptual near-duplicates, SMART drive health, ffmpeg presets, subtitle tools
 (extract, convert, shift, local generation) and the verified backup copy.
 
+## Tier 3, second slice: near duplicates (2026-11-25)
+
+`near-dupes` reports two different things and says which one it used:
+
+- **Images** by perceptual hash: 64-bit dHash over a 9x8 grayscale, Hamming distance <= 10. A
+  resized or recompressed copy matches; a mirrored picture does not. Capped at 5,000 photos.
+- **Videos** by identity key: title, year, episode marker and a `Part`/`CD`/`Disc`/`Vol` suffix.
+
+The first run of the real collection was wrong in two instructive ways, both now fixed and tested:
+every episode of a series collapsed into one "duplicate" group (the episode marker was not part of
+the key), and Shoah Part 1 grouped with Part 2. After the fix, 17,381 videos produce exactly one
+possible duplicate: La Traviata 1982, kept twice with and without its cast note. Since then a second
+false positive appeared (S02E00 vs S03E00, because episode 0 was rejected by the parser) and was
+fixed in the same pass.
+
+164 tests, clippy and fmt clean.
+
+Remaining in Tier 3: the verified backup copy, ffmpeg presets, subtitle tools, SMART drive health.
+
 ## Next step
 
 1. The remaining A2 work, in this order: identify from metadata (local dumps first: GCD, MangaBaka,
