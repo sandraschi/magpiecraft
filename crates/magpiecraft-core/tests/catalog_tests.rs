@@ -841,6 +841,64 @@ fn verification_baselines_then_detects_bitrot() {
 }
 
 #[test]
+fn near_duplicates_group_the_same_film_twice_but_not_two_different_films() {
+    let home = tmp("near-home");
+    let root = tmp("near-library");
+    std::fs::write(root.join("Alien 1979.mkv"), b"one encode").unwrap();
+    std::fs::write(root.join("Alien 1979 1080p BluRay.mkv"), b"another encode").unwrap();
+    std::fs::write(root.join("Aliens 1986.mkv"), b"a different film").unwrap();
+    let mut c = catalog(&home);
+    c.add_library("Video", &root.display().to_string(), "video", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let report = c.near_duplicates(50).unwrap();
+    assert_eq!(report["image_groups"], serde_json::json!(0));
+    assert_eq!(report["video_groups"], serde_json::json!(1));
+    let group = &report["groups"][0];
+    assert_eq!(group["kind"], serde_json::json!("video"));
+    assert_eq!(group["items"].as_array().unwrap().len(), 2);
+    let titles: Vec<&str> = group["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|i| i["title"].as_str())
+        .collect();
+    assert!(titles.iter().any(|t| t.contains("1080p")), "{titles:?}");
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn near_duplicates_find_a_resized_photo_copy() {
+    let home = tmp("near-photo-home");
+    let root = tmp("near-photo-library");
+    let base = image::RgbaImage::from_fn(240, 360, |x, y| {
+        image::Rgba([(x % 255) as u8, (y % 255) as u8, 90, 255])
+    });
+    let small = image::imageops::resize(&base, 120, 180, image::imageops::FilterType::Triangle);
+    base.save(root.join("shot one.png")).unwrap();
+    small.save(root.join("shot one copy.png")).unwrap();
+    // A clearly different picture.
+    let other = image::RgbaImage::from_fn(240, 360, |x, y| {
+        image::Rgba([(255 - (x % 255)) as u8, 20, (y % 200) as u8, 255])
+    });
+    other.save(root.join("different.png")).unwrap();
+    let mut c = catalog(&home);
+    c.add_library("Photos", &root.display().to_string(), "photo", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let report = c.near_duplicates(50).unwrap();
+    assert_eq!(report["photos_hashed"], serde_json::json!(3));
+    assert_eq!(report["image_groups"], serde_json::json!(1), "{report}");
+    let group = &report["groups"][0];
+    assert_eq!(group["items"].as_array().unwrap().len(), 2);
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn status_reports_the_engine_and_the_optional_tools() {
     let (home, root) = fixture("status");
     let mut c = catalog(&home);
