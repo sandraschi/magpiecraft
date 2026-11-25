@@ -192,6 +192,28 @@ enum Cmd {
     },
     /// MCP stdio server (this is what a client starts).
     Mcp,
+    /// What checksum verification is due.
+    Verify {
+        #[arg(long, default_value_t = 30)]
+        every_days: i64,
+    },
+    /// Verify the libraries that are due (the first run writes the baseline).
+    VerifyRun {
+        library: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        every_days: i64,
+        /// Verify even when the library is not due.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Where each library stands against the configured backup roots.
+    Backup,
+    /// Set (or clear) the backup roots.
+    BackupRoots {
+        roots: Vec<String>,
+        #[arg(long)]
+        clear: bool,
+    },
     /// Items whose filename parse was uncertain.
     Review {
         library: Option<String>,
@@ -210,6 +232,8 @@ enum Cmd {
     },
     /// Build a quarantine plan for one item (a move, never a delete).
     PlanQuarantine { key: String },
+    /// Build a cleanup plan: empty folders, orphan sidecars, samples, junk.
+    PlanCleanup { library: Option<String> },
     /// Saved plans.
     Plans,
     /// Apply a saved plan. Requires --confirm.
@@ -484,6 +508,32 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
         Cmd::BenchScan { .. } | Cmd::Mcp => {
             return Err("internal: command handled before the catalogue was opened".to_string())
         }
+        Cmd::Backup => (Command::BackupStatus.id(), Command::BackupStatus),
+        Cmd::BackupRoots { roots, clear } => {
+            let c = Command::BackupRoots {
+                roots: roots.clone(),
+                clear: *clear,
+            };
+            (c.id(), c)
+        }
+        Cmd::Verify { every_days } => {
+            let c = Command::VerifyStatus {
+                every_days: *every_days,
+            };
+            (c.id(), c)
+        }
+        Cmd::VerifyRun {
+            library,
+            every_days,
+            force,
+        } => {
+            let c = Command::VerifyRun {
+                library: library.clone(),
+                every_days: *every_days,
+                force: *force,
+            };
+            (c.id(), c)
+        }
         Cmd::Review { library, limit } => {
             let c = Command::Review {
                 library: library.clone(),
@@ -505,6 +555,12 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
         }
         Cmd::PlanQuarantine { key } => {
             let c = Command::PlanQuarantine { key: key.clone() };
+            (c.id(), c)
+        }
+        Cmd::PlanCleanup { library } => {
+            let c = Command::PlanCleanup {
+                library: library.clone(),
+            };
             (c.id(), c)
         }
         Cmd::Plans => (Command::Plans.id(), Command::Plans),

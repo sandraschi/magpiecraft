@@ -98,16 +98,20 @@ pub fn tools() -> Value {
         tool(
             "media_health",
             "Integrity. duplicates: exact duplicates by size then BLAKE3. hash: BLAKE3 of one item. manifest_write \
-             and manifest_verify: checksum manifests for bitrot detection. inspect: ffprobe technical details for \
-             one file. Files are only ever read.",
+             and manifest_verify: checksum manifests for bitrot detection. verify_status: which libraries are \
+             due for a re-check and what the last run found. verify_run: write the baseline on the first run, \
+             compare afterwards, and record every run. inspect: ffprobe technical details for one file. Files \
+             are only ever read.",
             json!({
-                "operation": ops(&["duplicates", "hash", "manifest_write", "manifest_verify", "inspect"]),
+                "operation": ops(&["duplicates", "hash", "manifest_write", "manifest_verify", "inspect", "verify_status", "verify_run", "backup_status"]),
                 "library": library,
                 "limit": { "type": "integer", "description": "duplicates: group cap (default 200)" },
                 "key": key,
                 "out": { "type": "string", "description": "manifest_write: manifest path (default under the data home)" },
                 "manifest": { "type": "string", "description": "manifest_verify: manifest path" },
-                "path": { "type": "string", "description": "inspect: absolute path of a media file" }
+                "path": { "type": "string", "description": "inspect: absolute path of a media file" },
+                "every_days": { "type": "integer", "description": "verify: re-check interval in days (default 30)" },
+                "force": { "type": "boolean", "description": "verify_run: verify even when not due" }
             }),
             &["operation"]
         ),
@@ -116,10 +120,11 @@ pub fn tools() -> Value {
             "Organise the collection without touching a file until you confirm. review lists items whose \
              filename parse was uncertain. plan_rename builds a rename plan (nothing changes), plans lists \
              saved plans, apply applies one with confirm=true, journals lists applied plans, undo reverses \
-             one with confirm=true. plan_quarantine moves an item into quarantine, never deletes it. Every \
-             applied change is journalled and reversible.",
+             one with confirm=true. plan_quarantine moves an item into quarantine, never deletes it. \
+             plan_cleanup proposes empty folders, orphan sidecars, sample files and junk for quarantine. \
+             Every applied change is journalled and reversible.",
             json!({
-                "operation": ops(&["review", "plan_rename", "plan_quarantine", "plans", "apply", "journals", "undo"]),
+                "operation": ops(&["review", "plan_rename", "plan_quarantine", "plan_cleanup", "plans", "apply", "journals", "undo"]),
                 "library": library,
                 "limit": { "type": "integer", "description": "review: how many entries (default 200); plan_rename: 0 for all" },
                 "preset": { "type": "string", "description": "plan_rename: auto (per item kind), comics, manga or video" },
@@ -278,6 +283,15 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
             "inspect" => Command::Inspect {
                 path: req_str(args, "path")?,
             },
+            "verify_status" | "verify.status" => Command::VerifyStatus {
+                every_days: opt_i32(args, "every_days").map(i64::from).unwrap_or(30),
+            },
+            "backup_status" | "backup.status" => Command::BackupStatus,
+            "verify_run" | "verify.run" => Command::VerifyRun {
+                library: opt_str(args, "library"),
+                every_days: opt_i32(args, "every_days").map(i64::from).unwrap_or(30),
+                force: opt_bool(args, "force").unwrap_or(false),
+            },
             other => return Err(format!("unknown media_health operation: {other}")),
         },
         "media_curate" => match op.as_str() {
@@ -292,6 +306,9 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
             },
             "plan_quarantine" | "plan.quarantine" => Command::PlanQuarantine {
                 key: req_str(args, "key")?,
+            },
+            "plan_cleanup" | "plan.cleanup" => Command::PlanCleanup {
+                library: opt_str(args, "library"),
             },
             "plans" => Command::Plans,
             "apply" => Command::ApplyPlan {

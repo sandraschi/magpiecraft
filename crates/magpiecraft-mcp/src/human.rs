@@ -257,7 +257,7 @@ pub fn print(command: &str, value: &Value) {
                 }
             }
         }
-        "plan.rename" | "plan.quarantine" => {
+        "plan.rename" | "plan.quarantine" | "plan.cleanup" => {
             println!(
                 "{} operation{} planned ({} skipped)",
                 n(value, "operations"),
@@ -274,6 +274,106 @@ pub fn print(command: &str, value: &Value) {
                     for line in s(plan, "diff").lines().take(20) {
                         println!("    {line}");
                     }
+                }
+            }
+            println!("  {}", s(value, "note"));
+        }
+        "backup.status" => {
+            if value.get("unconfigured").and_then(Value::as_bool) == Some(true) {
+                println!("no backup roots configured");
+            } else {
+                println!(
+                    "{} complete, {} partial, {} not backed up",
+                    n(value, "complete"),
+                    n(value, "partial"),
+                    n(value, "not_backed_up")
+                );
+            }
+            if let Some(entries) = value.get("entries").and_then(Value::as_array) {
+                for e in entries.iter().take(30) {
+                    println!(
+                        "  {:<16} {:<22} {} items",
+                        s(e, "status"),
+                        s(e, "library"),
+                        n(e, "items")
+                    );
+                }
+            }
+            println!("  {}", s(value, "note"));
+        }
+        "backup.roots" => println!(
+            "{} backup root(s): {}",
+            n(value, "count"),
+            value
+                .get("backup_roots")
+                .and_then(Value::as_array)
+                .map(|r| r
+                    .iter()
+                    .filter_map(|x| x.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "))
+                .unwrap_or_default()
+        ),
+        "verify.status" => {
+            println!(
+                "{} of {} libraries are due a re-check (every {} days)",
+                n(value, "due"),
+                n(value, "libraries"),
+                n(value, "every_days")
+            );
+            if let Some(entries) = value.get("entries").and_then(Value::as_array) {
+                for e in entries {
+                    let last = e
+                        .get("last_checked_at")
+                        .and_then(Value::as_str)
+                        .unwrap_or("never");
+                    println!(
+                        "  {:<3} {:<24} {:<22} last ok {} / missing {} / changed {}",
+                        if e.get("due").and_then(Value::as_bool) == Some(true) {
+                            "DUE"
+                        } else {
+                            "-"
+                        },
+                        s(e, "library"),
+                        last,
+                        e.get("last_ok").and_then(Value::as_i64).unwrap_or(0),
+                        e.get("last_missing").and_then(Value::as_i64).unwrap_or(0),
+                        e.get("last_changed").and_then(Value::as_i64).unwrap_or(0)
+                    );
+                }
+            }
+        }
+        "verify.run" => {
+            println!(
+                "checked {} file(s) in {} librar{} ({} problem{})",
+                n(value, "files_checked"),
+                n(value, "libraries_checked"),
+                if n(value, "libraries_checked") == 1 {
+                    "y"
+                } else {
+                    "ies"
+                },
+                n(value, "problems"),
+                if n(value, "problems") == 1 { "" } else { "s" }
+            );
+            if let Some(results) = value.get("results").and_then(Value::as_array) {
+                for r in results {
+                    println!(
+                        "  {:<24} {} checked {} ok {}{}",
+                        s(r, "library"),
+                        if r.get("baseline").and_then(Value::as_bool) == Some(true) {
+                            "baseline,"
+                        } else {
+                            "compared,"
+                        },
+                        n(r, "checked"),
+                        n(r, "ok"),
+                        if n(r, "changed") + n(r, "missing") > 0 {
+                            format!(", {} changed, {} missing", n(r, "changed"), n(r, "missing"))
+                        } else {
+                            String::new()
+                        }
+                    );
                 }
             }
             println!("  {}", s(value, "note"));
