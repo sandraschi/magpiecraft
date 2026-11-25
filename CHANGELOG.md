@@ -2,6 +2,27 @@
 
 All notable changes to MagpieCraft. Newest first. Dates are the day the work landed.
 
+## 0.8.0 - 2026-11-25 (Tier 3: subtitles)
+
+Added:
+
+- **`subs <key>`**: sidecar subtitles for an item (with their cue count) and the embedded subtitle
+  tracks ffprobe reports (codec, language, subtitle index).
+- **`subs-shift <path> --by <seconds>`**: moves every cue by a signed offset. A cue pushed before zero is
+  truncated at zero (never stretched, or the text would appear after it finished); a cue pushed entirely
+  before zero is dropped and counted. Writes `<stem>.shifted.srt` and refuses to overwrite.
+- **`subs-convert <path> --to srt|vtt`**: SRT to WebVTT and back, with a proper `WEBVTT` header and
+  `.` millisecond separators. ASS/SSA is read-only with a reason (it carries styling sections worth
+  more than anything this app could regenerate); convert it with ffmpeg.
+- **`subs-extract <key> --stream N --out file`**: pulls an embedded track out with
+  `ffmpeg -map 0:s:N`, invoked, never linked. ffmpeg is now part of the detected toolchain.
+- Parsing is tolerant on purpose: BOM, CRLF, a missing SRT index, WebVTT headers, `NOTE` blocks, cue ids
+  and settings after the end time all parse. Non-UTF-8 subtitle files are refused by name rather than
+  mangled.
+
+173 tests. Still planned in Tier 3: ffmpeg presets (remux/normalise) and SMART drive health; local
+subtitle generation is planned with the other transcription work.
+
 ## 0.7.0 - 2026-11-25 (Tier 3: verified backup copy)
 
 Added:

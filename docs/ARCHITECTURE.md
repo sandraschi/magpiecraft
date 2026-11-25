@@ -244,6 +244,24 @@ Rules worth knowing:
     own key, so a series is not reported as one giant duplicate group; a two-part film is not a
     duplicate of itself; a cast note in brackets is not part of the identity.
 
+## Subtitles: text, not a rendering engine
+
+- Sidecars are found by stem: `Film 2020.srt` belongs to `Film 2020.mkv`.
+- SRT and WebVTT are parsed into cues and rendered back. Timestamps accept `HH:MM:SS,mmm`,
+  `HH:MM:SS.mmm` and `MM:SS.mmm`; output always uses full hours so a file can exceed an hour.
+- A shift moves every cue. A cue pushed before zero is truncated at zero, not stretched, because
+  otherwise the text would appear after it has already finished; a cue pushed entirely before zero is
+  dropped and counted.
+- Everything writes a *new* file (`<stem>.shifted.srt`, `<stem>.converted.vtt`, or `--out`) and refuses
+  to overwrite. The source is never modified.
+- ASS/SSA is recognised and read-only: it carries styling sections worth more than anything this app
+  could regenerate. Convert it with ffmpeg instead.
+- Extracting an embedded track is `ffmpeg -map 0:s:N`, invoked as a subprocess. No subtitle decoding or
+  rendering is linked into the app.
+
+Not built: generating subtitles locally (planned as a Rust engine, never Python) and rendering
+subtitles over video, which belongs to the player (D8).
+
 ## Playback is a hand-off, not a decoder (D8)
 
 MagpieCraft does not decode video or audio. `open <key>` launches a real player with the file and the

@@ -90,6 +90,10 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Cleanup: empty folders, orphan sidecars, samples, junk | Implemented | A plan of quarantines with reasons; an ebook library is never touched automatically |
 | Backup status (3-2-1 view) | Implemented | Compares each library with the copies under the configured backup roots; a count, not a checksum |
 | Verified backup copy | Implemented | `backup-plan --to <root>` copies what is missing, checksums every copy against its source, never overwrites, and undo removes only the copies |
+| Subtitles: list sidecars and embedded tracks | Implemented | `subs <key>` shows sidecars with their cue count and the embedded streams ffprobe reports |
+| Subtitles: shift and convert (SRT/VTT) | Implemented | Pure text: `subs-shift --by <seconds>`, `subs-convert --to srt\|vtt`. New file only, never overwrites, ASS is read-only |
+| Subtitles: extract an embedded track | Implemented | `subs-extract --stream N --out file` through ffmpeg |
+| Subtitles: local generation | Planned | Whisper-class on the GPU; the fleet rule is a Rust engine (whisper-rs or speechcraft), never Python |
 | Near-duplicate detection | Implemented | Images by perceptual hash (dHash, 10 of 64 bits); videos by title, year, episode marker and Part/CD suffix. The report says which is which |
 | Drive health (SMART) | Planned | Needs a Windows API pass |
 | FTS5 search | Implemented | Prefix tokens, diacritics folded, substring fallback |
@@ -119,7 +123,7 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Pillar | Status |
 |---|---|
 | C. Near duplicates, backup planner, SMART | Planned (Tier 3) |
-| D. Convert, subtitle generation, CD ripping, print scanning | Planned (Tier 3 and 5) |
+| D. Convert, subtitle generation, CD ripping, print scanning | Partial: subtitle sidecars listed, shifted and converted; the rest planned |
 | E. Knowledge graph and federated sources | Planned (Tier 4; the source registry exists) |
 | F. Gaps, wishlist and the curated source guide | Planned (Tier 5) |
 
@@ -216,7 +220,7 @@ Nothing is ever written into a library. Covers, caches and manifests live here.
 
 Measured 2026-11-24 on the Tier 2 commit:
 
-- `cargo test --workspace`: **166 passed**, 0 failed
+- `cargo test --workspace`: **173 passed**, 0 failed
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean
   (`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented` denied workspace-wide)
 - `cargo fmt --all --check`: clean

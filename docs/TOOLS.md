@@ -41,6 +41,10 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `series [library]` | Series with their direction overrides |
 | `series-rtl <library> <series> [--on\|--off]` | Set the reading direction of a series |
 | `inspect <path>` | ffprobe technical details for one media file |
+| `subs <key>` | Subtitle sidecars (with cue counts) and embedded subtitle tracks |
+| `subs-shift <path> --by <seconds> [--out file]` | Move every cue; writes a new file and never overwrites |
+| `subs-convert <path> --to srt\|vtt [--out file]` | Convert between SRT and WebVTT |
+| `subs-extract <key> --stream N --out file` | Pull an embedded subtitle track out with ffmpeg |
 | `review [library] [--limit N]` | Items whose filename parse was uncertain, with the confidence |
 | `plan-rename [library] [--preset auto\|comics\|manga\|video] [--limit N]` | Build a rename plan. `auto` picks the preset per item kind; nothing changes on disk |
 | `plan-quarantine <key>` | Build a plan that moves one item into quarantine (never deletes) |
@@ -109,6 +113,10 @@ go to stderr. Five compound tools, all read-first except the explicitly confirme
 | `progress_set` | `key`, `page`, `total`, `finished` | Saved progress |
 | `page_export` | `key`, `page`, `out` | Writes one page to a file and returns its path and size |
 | `open` | `key` | Launches the player or OS handler with the file and the resume position. The one read tool with a visible side effect: it starts a program on the user's own desktop |
+| `subs` | `key` | Sidecars with cue counts, and embedded subtitle tracks |
+| `subs_shift` | `path`, `by`, `out` | Shift the cues by seconds into a new file |
+| `subs_convert` | `path`, `to`, `out` | Convert SRT to WebVTT or back into a new file |
+| `subs_extract` | `key`, `stream`, `out` | Extract an embedded subtitle track with ffmpeg |
 
 ### `media_curate`
 
