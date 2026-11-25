@@ -1250,7 +1250,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "magpie-adapters"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "magpiecraft-app"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "clap",
  "eframe",
@@ -1272,7 +1272,7 @@ dependencies = [
 
 [[package]]
 name = "magpiecraft-comics"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "magpiecraft-scan",
  "serde",
@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "magpiecraft-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "image",
@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "magpiecraft-health"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "blake3",
  "magpiecraft-scan",
@@ -1313,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "magpiecraft-mcp"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1324,7 +1324,7 @@ dependencies = [
 
 [[package]]
 name = "magpiecraft-meta"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1332,7 +1332,7 @@ dependencies = [
 
 [[package]]
 name = "magpiecraft-scan"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1340,7 +1340,7 @@ dependencies = [
 
 [[package]]
 name = "magpiecraft-sources"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1348,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "magpiecraft-store"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "magpiecraft-tools"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",

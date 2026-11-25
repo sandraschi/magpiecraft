@@ -2,6 +2,26 @@
 
 All notable changes to MagpieCraft. Newest first. Dates are the day the work landed.
 
+## 0.9.0 - 2026-11-25 (Tier 3: ffmpeg presets)
+
+Added:
+
+- **`presets`**: the four named ffmpeg recipes with what each one runs: `remux-mkv` (copy to
+  Matroska, fast, lossless), `mp4-compat` (H.264 CRF 20 + AAC 192k, faststart), `loudnorm` (copy
+  video, EBU R128 to -16 LUFS), `strip-metadata` (drop every tag).
+- **`plan-convert --preset`**: a conversion plan for one video or track. Refuses comics, books and
+  photos ("presets apply to video and audio"), refuses a missing source and an existing target, and
+  plans into `<stem>.<preset>.<ext>` beside the source so two presets never collide.
+- **Apply encodes with ffmpeg, invoked not linked.** The output must probe as media with a positive
+  duration or it is deleted and counted as a failure. Undo (`Encode` op) deletes the output, never
+  the source. A backup-style plan does not trigger a pointless rescan.
+- Live on the real collection: La Traviata 1982.avi (1.4 GB) remuxed to MKV in 31 s, output probed
+  at 6617 s, then undone with the library byte-identical.
+
+180 tests. Still planned in Tier 3: SMART drive health, local subtitle generation (Rust engine only).
+
+Still planned in Tier 3: SMART drive health, local subtitle generation (Rust engine only).
+
 ## 0.8.0 - 2026-11-25 (Tier 3: subtitles)
 
 Added:

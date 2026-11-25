@@ -244,6 +244,24 @@ Rules worth knowing:
     own key, so a series is not reported as one giant duplicate group; a two-part film is not a
     duplicate of itself; a cast note in brackets is not part of the identity.
 
+## Conversions: presets, plans, encode, undo
+
+A preset is a named, fixed ffmpeg argument list (`presets` shows the exact args):
+
+| Preset | What it does |
+|---|---|
+| `remux-mkv` | Copy every stream into Matroska. No re-encode: fast and lossless |
+| `mp4-compat` | H.264 CRF 20 + AAC 192k with faststart. Plays anywhere |
+| `loudnorm` | Copy video, re-encode audio through EBU R128 loudness normalisation (-16 LUFS) |
+| `strip-metadata` | Copy the streams, drop every metadata tag |
+
+`plan-convert <key> --preset <id>` plans one video or track into `<stem>.<preset>.<ext>` beside the
+source, so two presets never collide. Refuses comics, books and photos, a missing source, an existing
+target, and a missing ffmpeg (with the variable to set). Apply runs ffmpeg; the output must probe as
+media with a positive duration or it is deleted and counted as a failure. Undo deletes the output.
+A backup-style plan does not trigger a pointless rescan, and a conversion never lands on top of the
+original.
+
 ## Subtitles: text, not a rendering engine
 
 - Sidecars are found by stem: `Film 2020.srt` belongs to `Film 2020.mkv`.

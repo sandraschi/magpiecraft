@@ -41,6 +41,8 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `series [library]` | Series with their direction overrides |
 | `series-rtl <library> <series> [--on\|--off]` | Set the reading direction of a series |
 | `inspect <path>` | ffprobe technical details for one media file |
+| `plan-convert <key> --preset <id> [--out path]` | Plan a conversion; apply encodes with ffmpeg, undo deletes the output |
+| `presets` | The four named ffmpeg recipes and whether ffmpeg is present |
 | `subs <key>` | Subtitle sidecars (with cue counts) and embedded subtitle tracks |
 | `subs-shift <path> --by <seconds> [--out file]` | Move every cue; writes a new file and never overwrites |
 | `subs-convert <path> --to srt\|vtt [--out file]` | Convert between SRT and WebVTT |
@@ -113,6 +115,15 @@ go to stderr. Five compound tools, all read-first except the explicitly confirme
 | `progress_set` | `key`, `page`, `total`, `finished` | Saved progress |
 | `page_export` | `key`, `page`, `out` | Writes one page to a file and returns its path and size |
 | `open` | `key` | Launches the player or OS handler with the file and the resume position. The one read tool with a visible side effect: it starts a program on the user's own desktop |
+
+### `media_transform`
+
+Converting and subtitle work; everything here writes new files, never edits a source.
+
+| Operation | Arguments | Returns |
+|---|---|---|
+| `presets` | - | The named ffmpeg recipes and whether ffmpeg is present |
+| `convert_plan` | `key`, `preset`, `out` | One encode op; apply runs ffmpeg, undo deletes the output |
 | `subs` | `key` | Sidecars with cue counts, and embedded subtitle tracks |
 | `subs_shift` | `path`, `by`, `out` | Shift the cues by seconds into a new file |
 | `subs_convert` | `path`, `to`, `out` | Convert SRT to WebVTT or back into a new file |
