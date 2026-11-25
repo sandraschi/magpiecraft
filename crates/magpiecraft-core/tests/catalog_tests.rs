@@ -659,6 +659,60 @@ fn a_video_library_is_catalogued_as_video() {
 }
 
 #[test]
+fn opening_a_film_records_it_even_when_the_player_is_missing() {
+    use magpiecraft_core::{Player, PlayerKind};
+    let home = tmp("open-home");
+    let root = tmp("open-library");
+    std::fs::write(root.join("Alien 1979.mkv"), b"not really a film").unwrap();
+    let mut c = catalog(&home);
+    c.add_library("Video", &root.display().to_string(), "video", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let item = c.browse(Some("lib:1|")).unwrap().items.remove(0);
+
+    // A player that is not there: the launch fails, loudly, but the attempt is
+    // still recorded so the film shows up in "continue" rather than vanishing.
+    c.set_player_override(Some(Player {
+        kind: PlayerKind::Vlc,
+        exe: Some(home.join("no-such-player.exe")),
+    }));
+    c.set_position(&item.key, 90).unwrap();
+    let err = c.open_item(&item.key).unwrap_err();
+    assert_eq!(err.kind(), "tool");
+    assert!(err.to_string().contains("no-such-player"), "{err}");
+
+    let continuing = c.continue_reading(10).unwrap();
+    let entry = continuing["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["key"] == serde_json::json!(item.key))
+        .expect("the film is in the continue row");
+    assert_eq!(entry["kind"], serde_json::json!("video"));
+    assert_eq!(entry["label"], serde_json::json!("1:30"));
+    assert_eq!(entry["position_secs"], serde_json::json!(90));
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn comics_are_read_in_the_app_not_handed_to_a_player() {
+    let (home, root) = fixture("no-open");
+    let mut c = catalog(&home);
+    c.add_library("Comics", &root.display().to_string(), "comics", false, None)
+        .unwrap();
+    c.scan(None, false).unwrap();
+    let item = c.browse(Some("lib:1|Saga")).unwrap().items.remove(0);
+    let err = c.open_item(&item.key).unwrap_err();
+    assert_eq!(err.kind(), "invalid");
+    assert!(err.to_string().contains("reader"), "{err}");
+    drop(c);
+    std::fs::remove_dir_all(&home).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn status_reports_the_engine_and_the_optional_tools() {
     let (home, root) = fixture("status");
     let mut c = catalog(&home);

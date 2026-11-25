@@ -22,7 +22,7 @@ use magpiecraft_comics::{
 use magpiecraft_health::{self as health, DupGroup};
 use magpiecraft_scan::{self as scan, WalkOptions};
 use magpiecraft_store::{ItemRow, LibraryRow, NewItem, Store, Upsert};
-use magpiecraft_tools::{self, Toolchain};
+use magpiecraft_tools::{self, Player, Toolchain};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -68,6 +68,8 @@ pub struct Catalog {
     settings: Settings,
     store: Store,
     tools: Toolchain,
+    /// Player used by `open_item`. Tests point it at a script.
+    player_override: Option<Player>,
 }
 
 impl Catalog {
@@ -80,6 +82,7 @@ impl Catalog {
             settings,
             store,
             tools: Toolchain::detect(),
+            player_override: None,
         })
     }
 
@@ -95,6 +98,7 @@ impl Catalog {
             settings: Settings::default(),
             store: Store::open_in_memory()?,
             tools: Toolchain::detect(),
+            player_override: None,
         })
     }
 
@@ -110,14 +114,117 @@ impl Catalog {
         &self.tools
     }
 
-    /// Replace the detected toolchain. Tests use it to prove both states: with the
-    /// tool (real extraction) and without it (`not_configured`).
+    /// Hand one item to the program that can actually show it: the player for
+    /// video and audio, the OS handler for books and photos. The position it left
+    /// off at is passed on when the player supports it, and remembered either way.
+    ///
+    /// Comics are not handed off: they are read in this app's reader.
+    pub fn open_item(&mut self, key: &str) -> MagpieResult<Value> {
+        let (lib, row) = self.resolve_item(key)?;
+        let kind = MediaKind::parse(&row.media_kind)
+            .unwrap_or_else(|| MediaKind::parse(&lib.kind).unwrap_or(MediaKind::Other));
+        if kind.is_comicish() {
+            return Err(MagpieError::invalid(
+                "comics are read in the reader, not handed to a player",
+            ));
+        }
+        if !kind.is_handed_off() {
+            return Err(MagpieError::invalid(format!(
+                "nothing opens a {} item",
+                kind.as_str()
+            )));
+        }
+        let path = library_path(&lib, &row.rel);
+        if !path.is_file() {
+            return Err(MagpieError::not_found(format!(
+                "{} is not on disk",
+                path.display()
+            )));
+        }
+        // Duration is probed once, then cached on the row.
+        let duration = match self.store.item_duration(row.id)? {
+            Some(secs) if secs > 0 => Some(secs),
+            _ => match magpiecraft_tools::ffprobe(&self.tools, &path) {
+                Ok(info) => {
+                    let secs = info
+                        .duration_seconds
+                        .map(|d| d.round() as i64)
+                        .filter(|d| *d > 0);
+                    if let Some(secs) = secs {
+                        self.store.set_item_duration(row.id, secs)?;
+                    }
+                    secs
+                }
+                Err(_) => None,
+            },
+        };
+        let position = self
+            .store
+            .progress_get(&row.key())?
+            .and_then(|p| p.position_secs)
+            .filter(|p| *p > 0);
+        let player = self.player();
+        // Record the open before launching: if the player takes the process name,
+        // the catalogue still knows which film was started and when.
+        self.store.progress_set_position(
+            &row.key(),
+            position.unwrap_or(0),
+            duration,
+            Some(&row.title),
+        )?;
+        magpiecraft_tools::launch(
+            &player,
+            &path,
+            position.map(|p| u64::try_from(p).unwrap_or(0)),
+        )
+        .map_err(MagpieError::Tool)?;
+        Ok(json!({
+            "ok": true,
+            "key": row.key(),
+            "title": row.title,
+            "kind": kind.as_str(),
+            "path": path.display().to_string(),
+            "player": player.kind.label(),
+            "exe": player.exe.as_ref().map(|p| p.display().to_string()),
+            "start_secs": position,
+            "duration_secs": duration,
+            "note": "MagpieCraft launches the player; it does not decode video itself",
+        }))
+    }
+
+    /// Remember a playback position that was read from somewhere else (a shortcut,
+    /// or the player's own watch-later file).
+    pub fn set_position(&mut self, key: &str, position_secs: u64) -> MagpieResult<Value> {
+        let (_, row) = self.resolve_item(key)?;
+        let duration = self.store.item_duration(row.id)?;
+        let position = i64::try_from(position_secs).unwrap_or(i64::MAX);
+        self.store
+            .progress_set_position(&row.key(), position, duration, Some(&row.title))?;
+        Ok(json!({
+            "key": row.key(),
+            "position_secs": position,
+            "duration_secs": duration,
+        }))
+    }
+
+    /// Every applyable change goes through the store; this is for tests and for the
+    /// app's status line.
     pub fn set_tools(&mut self, tools: Toolchain) {
         self.tools = tools;
     }
 
     pub(crate) fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// Force the player used by `open_item`. Tests use a script so nothing opens.
+    pub fn set_player_override(&mut self, player: Option<Player>) {
+        self.player_override = player;
+    }
+
+    /// Which player "open with player" will use right now.
+    pub fn player(&self) -> Player {
+        self.player_override.clone().unwrap_or_else(Player::detect)
     }
 
     pub(crate) fn store_mut(&mut self) -> &mut Store {
@@ -864,14 +971,18 @@ impl Catalog {
 
     fn progress_view(&self, key: &str) -> Option<ProgressView> {
         self.store.progress_get(key).ok().flatten().map(|p| {
-            let percent = if p.total > 0 {
-                (p.page as f32 / p.total as f32).clamp(0.0, 1.0) * 100.0
-            } else {
-                0.0
+            let percent = match (p.position_secs, p.duration_secs) {
+                (Some(position), Some(duration)) if duration > 0 => {
+                    (position as f32 / duration as f32).clamp(0.0, 1.0) * 100.0
+                }
+                _ if p.total > 0 => (p.page as f32 / p.total as f32).clamp(0.0, 1.0) * 100.0,
+                _ => 0.0,
             };
             ProgressView {
                 page: p.page,
                 total: p.total,
+                position_secs: p.position_secs,
+                duration_secs: p.duration_secs,
                 finished: p.finished,
                 percent,
                 updated_at: p.updated_at,
@@ -937,12 +1048,37 @@ impl Catalog {
             .iter()
             .map(|p| {
                 let title = p.title.clone().unwrap_or_default();
+                // The kind comes from the item the progress key points at; a film
+                // and a comic both live in this table.
+                let kind = kind_for_key(&p.key, &self.store);
+                let percent = match (p.position_secs, p.duration_secs) {
+                    (Some(position), Some(duration)) if duration > 0 => {
+                        (position as f32 / duration as f32 * 100.0).clamp(0.0, 100.0)
+                    }
+                    _ if p.total > 0 => (p.page as f32 / p.total as f32 * 100.0).clamp(0.0, 100.0),
+                    _ => 0.0,
+                };
+                let label = match (p.position_secs, p.duration_secs) {
+                    (Some(position), Some(duration)) if duration > 0 => format!(
+                        "{} / {}",
+                        magpiecraft_tools::format_secs(u64::try_from(position).unwrap_or(0)),
+                        magpiecraft_tools::format_secs(u64::try_from(duration).unwrap_or(0))
+                    ),
+                    (Some(position), _) if position > 0 => {
+                        magpiecraft_tools::format_secs(u64::try_from(position).unwrap_or(0))
+                    }
+                    _ => format!("p.{}/{}", p.page, p.total),
+                };
                 json!({
                     "key": p.key,
                     "title": title,
+                    "kind": kind,
                     "page": p.page,
                     "total": p.total,
-                    "percent": if p.total > 0 { (p.page as f32 / p.total as f32 * 100.0).clamp(0.0, 100.0) } else { 0.0 },
+                    "position_secs": p.position_secs,
+                    "duration_secs": p.duration_secs,
+                    "label": label,
+                    "percent": percent,
                     "updated_at": p.updated_at,
                 })
             })
@@ -1303,6 +1439,16 @@ pub fn no_pages_reason(kind: MediaKind) -> &'static str {
         MediaKind::Photo => "a single photo has no page list",
         _ => "this item has no page list",
     }
+}
+
+/// The media kind behind one progress key, so "continue" can tell a film from a
+/// comic. Unknown or missing rows fall back to `other`.
+fn kind_for_key(key: &str, store: &Store) -> String {
+    ItemKey::parse(key)
+        .and_then(|ik| store.item_by_rel(ik.library_id, &ik.rel).ok().flatten())
+        .map(|row| row.media_kind)
+        .filter(|kind| !kind.is_empty())
+        .unwrap_or_else(|| "other".to_string())
 }
 
 fn library_view(row: LibraryRow) -> Library {

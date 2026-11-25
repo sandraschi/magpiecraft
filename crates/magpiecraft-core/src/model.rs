@@ -56,6 +56,23 @@ impl MediaKind {
     pub fn default_rtl(self) -> bool {
         matches!(self, MediaKind::Manga)
     }
+
+    /// Comics, manga and magazines are read as pages in this app.
+    pub fn is_comicish(self) -> bool {
+        matches!(
+            self,
+            MediaKind::Comics | MediaKind::Manga | MediaKind::Magazines
+        )
+    }
+
+    /// Kinds whose file is handed to another program: a player for video and audio,
+    /// the OS handler for books and photos.
+    pub fn is_handed_off(self) -> bool {
+        matches!(
+            self,
+            MediaKind::Video | MediaKind::Audio | MediaKind::Ebook | MediaKind::Photo
+        )
+    }
 }
 
 /// Library id plus path relative to the library root. Empty `rel` is the root.
@@ -154,6 +171,9 @@ pub struct Crumb {
 pub struct ProgressView {
     pub page: i64,
     pub total: i64,
+    /// Playback position in seconds, for films and tracks.
+    pub position_secs: Option<i64>,
+    pub duration_secs: Option<i64>,
     pub finished: bool,
     pub percent: f32,
     pub updated_at: String,

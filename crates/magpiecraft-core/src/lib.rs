@@ -27,7 +27,7 @@ pub use model::{
 pub use magpiecraft_comics::{
     ContainerKind, Crop, FitMode, Helpers, PageSet, Reader, ReaderSettings, Slot, Step,
 };
-pub use magpiecraft_tools::Toolchain;
+pub use magpiecraft_tools::{format_secs, Player, PlayerKind, Toolchain};
 
 /// Version string used in status output and user agents.
 pub fn version() -> &'static str {

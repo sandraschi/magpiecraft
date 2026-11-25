@@ -56,6 +56,10 @@ pub enum Command {
         page: usize,
         out: String,
     },
+    /// Hand an item to the player or the OS handler, with its resume position.
+    OpenItem {
+        key: String,
+    },
     Rtl {
         key: String,
         rtl: Option<bool>,
@@ -152,6 +156,7 @@ impl Command {
             Command::Pages { .. } => "pages",
             Command::PageOffset { .. } => "page_offset",
             Command::PageExport { .. } => "page_export",
+            Command::OpenItem { .. } => "open",
             Command::Rtl { .. } => "rtl",
             Command::ProgressGet { .. } => "progress.get",
             Command::ProgressSet { .. } => "progress.set",
@@ -228,6 +233,7 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
         Command::Pages { key } => to_value(catalog.pages(&key)?),
         Command::PageOffset { key, offset } => catalog.set_page_offset(&key, offset),
         Command::PageExport { key, page, out } => catalog.export_page(&key, page, &out),
+        Command::OpenItem { key } => catalog.open_item(&key),
         Command::Rtl { key, rtl } => catalog.set_item_rtl(&key, rtl),
         Command::ProgressGet { key } => to_value(catalog.progress_get(&key)?),
         Command::ProgressSet {
