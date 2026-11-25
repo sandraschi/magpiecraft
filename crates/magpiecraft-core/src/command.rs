@@ -136,6 +136,13 @@ pub enum Command {
     NearDuplicates {
         limit: usize,
     },
+    /// Build (but do not apply) a verified backup copy plan.
+    PlanBackup {
+        library: Option<String>,
+        to: String,
+        verify: bool,
+        limit: usize,
+    },
     /// Build (but do not apply) a rename plan.
     PlanRename {
         library: Option<String>,
@@ -202,6 +209,7 @@ impl Command {
             Command::BackupStatus => "backup.status",
             Command::BackupRoots { .. } => "backup.roots",
             Command::NearDuplicates { .. } => "dupes.near",
+            Command::PlanBackup { .. } => "backup.plan",
             Command::PlanRename { .. } => "plan.rename",
             Command::PlanQuarantine { .. } => "plan.quarantine",
             Command::PlanCleanup { .. } => "plan.cleanup",
@@ -322,6 +330,12 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
         Command::BackupStatus => catalog.backup_status(),
         Command::BackupRoots { roots, clear } => catalog.set_backup_roots(&roots, clear),
         Command::NearDuplicates { limit } => catalog.near_duplicates(limit),
+        Command::PlanBackup {
+            library,
+            to,
+            verify,
+            limit,
+        } => catalog.plan_backup(library.as_deref(), &to, verify, limit),
         Command::PlanRename {
             library,
             preset,

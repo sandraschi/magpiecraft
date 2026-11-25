@@ -27,14 +27,26 @@ fn now() -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum PlanOp {
-    Move { from: String, to: String },
-    Write { to: String, content: String },
+    Move {
+        from: String,
+        to: String,
+    },
+    /// Copy a file to a backup. Undo removes the copy, never the source.
+    Copy {
+        from: String,
+        to: String,
+    },
+    Write {
+        to: String,
+        content: String,
+    },
 }
 
 impl PlanOp {
     pub fn describe(&self) -> String {
         match self {
             PlanOp::Move { from, to } => format!("- {from}\n+ {to}"),
+            PlanOp::Copy { from, to } => format!("copy {from}\n  -> {to}"),
             PlanOp::Write { to, content } => {
                 format!("+ {to} ({} bytes)", content.len())
             }
@@ -43,14 +55,14 @@ impl PlanOp {
 
     pub fn source(&self) -> Option<&str> {
         match self {
-            PlanOp::Move { from, .. } => Some(from),
+            PlanOp::Move { from, .. } | PlanOp::Copy { from, .. } => Some(from),
             PlanOp::Write { .. } => None,
         }
     }
 
     pub fn target(&self) -> &str {
         match self {
-            PlanOp::Move { to, .. } => to,
+            PlanOp::Move { to, .. } | PlanOp::Copy { to, .. } => to,
             PlanOp::Write { to, .. } => to,
         }
     }
@@ -64,6 +76,7 @@ pub enum PlanKind {
     Quarantine,
     Nfo,
     Cleanup,
+    Backup,
 }
 
 impl PlanKind {
@@ -73,6 +86,7 @@ impl PlanKind {
             PlanKind::Quarantine => "quarantine",
             PlanKind::Nfo => "nfo",
             PlanKind::Cleanup => "cleanup",
+            PlanKind::Backup => "backup",
         }
     }
 
@@ -82,6 +96,7 @@ impl PlanKind {
             "quarantine" => Some(PlanKind::Quarantine),
             "nfo" => Some(PlanKind::Nfo),
             "cleanup" => Some(PlanKind::Cleanup),
+            "backup" => Some(PlanKind::Backup),
             _ => None,
         }
     }
@@ -205,6 +220,9 @@ pub struct Plan {
     /// Items that were not planned, with the reason. Shown alongside the plan.
     pub skipped: Vec<String>,
     pub bytes: u64,
+    /// Hash both sides when applying a copy. Backups set this; renames ignore it.
+    #[serde(default)]
+    pub verify: bool,
 }
 
 impl Plan {
@@ -830,6 +848,7 @@ impl Catalog {
                 ops,
                 skipped,
                 bytes,
+                verify: false,
             };
             self.save_plan(&plan)?;
             plans.push(plan);
@@ -866,6 +885,7 @@ impl Catalog {
                         lib.name
                     )],
                     bytes: 0,
+                    verify: false,
                 };
                 self.save_plan(&plan)?;
                 plans.push(plan);
@@ -968,6 +988,7 @@ impl Catalog {
                 ops,
                 skipped,
                 bytes,
+                verify: false,
             };
             self.save_plan(&plan)?;
             plans.push(plan);
@@ -978,6 +999,124 @@ impl Catalog {
             "plans": plans.iter().map(plan_summary).collect::<Vec<_>>(),
             "operations": plans.iter().map(|p| p.ops.len()).sum::<usize>(),
             "note": "nothing has changed; apply each plan by id with confirm=true. Everything goes to quarantine, nothing is deleted",
+        }))
+    }
+
+    /// Build a verified backup copy plan: copy this library to `<to>/<library>/...`.
+    ///
+    /// Only files that are missing on the backup are copied, and a file that is
+    /// already there with the same size is left alone. Nothing is overwritten: a
+    /// different size at the target is reported, not clobbered.
+    pub fn plan_backup(
+        &mut self,
+        library: Option<&str>,
+        to: &str,
+        verify: bool,
+        limit: usize,
+    ) -> MagpieResult<Value> {
+        let target_root = PathBuf::from(to.trim());
+        if to.trim().is_empty() {
+            return Err(MagpieError::invalid("backup root is empty"));
+        }
+        if !target_root.is_dir() {
+            return Err(MagpieError::invalid(format!(
+                "backup root {} is not a directory; plug the drive in first",
+                target_root.display()
+            )));
+        }
+        let limit = if limit == 0 { usize::MAX } else { limit };
+        let libs = self.target_libraries(library)?;
+        let mut plans: Vec<Plan> = Vec::new();
+        for lib in libs {
+            let root = PathBuf::from(&lib.root);
+            let mut skipped: Vec<String> = Vec::new();
+            if !root.is_dir() {
+                skipped.push(format!("{}: library root is not reachable", lib.name));
+                continue;
+            }
+            // Refuse to back a library up inside itself.
+            let lib_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+            let dest_root = target_root
+                .canonicalize()
+                .unwrap_or_else(|_| target_root.clone());
+            if dest_root.starts_with(&lib_root) {
+                let plan = Plan {
+                    id: plan_id(),
+                    created_at: now(),
+                    kind: PlanKind::Backup.as_str().to_string(),
+                    library: lib.name.clone(),
+                    library_id: lib.id,
+                    root: lib.root.clone(),
+                    ops: Vec::new(),
+                    skipped: vec![format!(
+                        "{}: the backup root is inside the library",
+                        lib.name
+                    )],
+                    bytes: 0,
+                    verify,
+                };
+                self.save_plan(&plan)?;
+                plans.push(plan);
+                continue;
+            }
+            let dest_dir = target_root.join(sanitise_segment(&lib.name));
+            let items = self.store_items_in_library(lib.id, limit)?;
+            let mut ops: Vec<PlanOp> = Vec::new();
+            let mut already = 0usize;
+            let mut bytes = 0u64;
+            for row in &items {
+                let from = root_join(&lib.root, &row.rel);
+                let to_path = root_join(&dest_dir.display().to_string(), &row.rel);
+                if !Path::new(&from).is_file() {
+                    skipped.push(format!("{}: source is gone", row.rel));
+                    continue;
+                }
+                if Path::new(&to_path).exists() {
+                    let target_size = std::fs::metadata(&to_path)
+                        .map(|m| m.len())
+                        .unwrap_or(u64::MAX);
+                    let source_size = u64::try_from(row.size).unwrap_or(0);
+                    if target_size == source_size {
+                        already += 1;
+                    } else {
+                        skipped.push(format!(
+                            "{}: the backup has a different size, not overwriting it",
+                            row.rel
+                        ));
+                    }
+                    continue;
+                }
+                bytes = bytes.saturating_add(u64::try_from(row.size).unwrap_or(0));
+                ops.push(PlanOp::Copy { from, to: to_path });
+            }
+            let plan = Plan {
+                id: plan_id(),
+                created_at: now(),
+                kind: PlanKind::Backup.as_str().to_string(),
+                library: lib.name.clone(),
+                library_id: lib.id,
+                root: lib.root.clone(),
+                ops,
+                skipped,
+                bytes,
+                verify,
+            };
+            self.save_plan(&plan)?;
+            plans.push(plan);
+            let _ = already;
+        }
+        Ok(json!({
+            "ok": true,
+            "kind": "backup",
+            "to": target_root.display().to_string(),
+            "verify": verify,
+            "plans": plans.iter().map(plan_summary).collect::<Vec<_>>(),
+            "operations": plans.iter().map(|p| p.ops.len()).sum::<usize>(),
+            "note": if verify {
+                "nothing has changed; apply with confirm=true. Every copy is checksummed against its source"
+            } else {
+                "nothing has changed; apply with confirm=true. Copies are checked by size only (fast)"
+            },
         }))
     }
 
@@ -1008,6 +1147,7 @@ impl Catalog {
             }],
             skipped: Vec::new(),
             bytes: u64::try_from(row.size).unwrap_or(0),
+            verify: false,
         };
         self.save_plan(&plan)?;
         Ok(json!({
@@ -1069,6 +1209,16 @@ impl Catalog {
                         }
                     }
                 }
+                PlanOp::Copy { from, to } => {
+                    let result = copy_file(Path::new(from), Path::new(to), plan.verify);
+                    journal_ops.push(JournalOp {
+                        op: "copy".to_string(),
+                        from: Some(from.clone()),
+                        to: to.clone(),
+                        ok: result.is_ok(),
+                        error: result.err(),
+                    });
+                }
                 PlanOp::Write { to, content } => {
                     let result = write_sidecar(Path::new(to), content);
                     journal_ops.push(JournalOp {
@@ -1107,8 +1257,13 @@ impl Catalog {
         };
         self.save_journal(&journal)?;
         // A scan rebuilds folders and series for the new layout. It is incremental,
-        // so it does not reopen the archives it already knows.
-        let scan = self.scan(Some(&plan.library), false).ok();
+        // so it does not reopen the archives it already knows. A backup plan changes
+        // nothing in the library, so it does not need one.
+        let scan = if plan.kind == PlanKind::Backup.as_str() {
+            None
+        } else {
+            self.scan(Some(&plan.library), false).ok()
+        };
         Ok(json!({
             "ok": true,
             "journal": journal.id,
@@ -1210,6 +1365,13 @@ impl Catalog {
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                     Err(e) => problems.push(format!("{}: {e}", op.to)),
                 },
+                // Undoing a backup copy removes the copy. The source was never
+                // touched, so the library is exactly as it was.
+                "copy" => match std::fs::remove_file(&op.to) {
+                    Ok(()) => restored += 1,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => problems.push(format!("{}: {e}", op.to)),
+                },
                 _ => {}
             }
         }
@@ -1227,7 +1389,11 @@ impl Catalog {
         journal.undone = true;
         journal.undone_at = Some(now());
         self.save_journal(&journal)?;
-        let scan = self.scan(Some(&journal.library), false).ok();
+        let scan = if journal.kind == PlanKind::Backup.as_str() {
+            None
+        } else {
+            self.scan(Some(&journal.library), false).ok()
+        };
         Ok(json!({
             "ok": true,
             "journal": journal.id,
@@ -1297,6 +1463,50 @@ fn write_sidecar(to: &Path, content: &str) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     std::fs::write(to, content).map_err(|e| format!("{}: {e}", to.display()))
+}
+
+/// Copy one file, then prove the copy. With `verify`, both sides are hashed with
+/// BLAKE3; a copy that does not match is deleted again and reported as an error,
+/// because a wrong backup is worse than a missing one.
+fn copy_file(from: &Path, to: &Path, verify: bool) -> Result<(), String> {
+    if !from.is_file() {
+        return Err(format!("{} does not exist", from.display()));
+    }
+    if to.exists() {
+        return Err(format!(
+            "{} already exists, refusing to overwrite",
+            to.display()
+        ));
+    }
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::copy(from, to).map_err(|e| format!("{}: {e}", from.display()))?;
+    let source_size = std::fs::metadata(from).map(|m| m.len()).unwrap_or(0);
+    let copy_size = std::fs::metadata(to).map(|m| m.len()).unwrap_or(u64::MAX);
+    if source_size != copy_size {
+        let _ = std::fs::remove_file(to);
+        return Err(format!(
+            "{}: size differs after copy ({source_size} vs {copy_size})",
+            to.display()
+        ));
+    }
+    if verify {
+        let source = magpiecraft_health::hash_file(from).map_err(|e| e.to_string())?;
+        let copied = magpiecraft_health::hash_file(to).map_err(|e| e.to_string())?;
+        if source.0 != copied.0 {
+            let _ = std::fs::remove_file(to);
+            return Err(format!(
+                "{}: checksum differs after copy (source {} size {}, copy {} size {})",
+                to.display(),
+                &source.0[..12.min(source.0.len())],
+                source.1,
+                &copied.0[..12.min(copied.0.len())],
+                copied.1
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Paths used by the journal and quarantine, exposed for tests and for the CLI
