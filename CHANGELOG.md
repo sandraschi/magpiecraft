@@ -2,6 +2,27 @@
 
 All notable changes to MagpieCraft. Newest first. Dates are the day the work landed.
 
+## 0.6.0 - 2026-11-25 (Tier 3: near duplicates)
+
+Added:
+
+- **`near-dupes`** (MCP `media_health near_duplicates`), report only:
+  - Images by perceptual hash: 64-bit dHash over a 9x8 grayscale, Hamming distance <= 10. A
+    resized or recompressed copy matches; a mirrored picture does not. Capped at 5,000 photos
+    per report.
+  - Videos by identity key: title, year, episode marker (`S01E02`, `1x02`, season 0 specials and
+    episode 0 both accepted) and a `Part`/`CD`/`Disc`/`Vol` suffix. Cast notes in brackets are not
+    part of it, so the same recording kept under two names is found.
+  - The note says which kind of comparison produced the group.
+- Verified against the real collection: 17,381 videos produce exactly one possible duplicate
+  (La Traviata 1982, kept twice with and without its cast note), and no false positives from
+  series episodes or the two-part Shoah. The first version did group every episode of a series
+  and Shoah Part 1 with Part 2; the identity key now carries the episode marker and the part
+  suffix, and there is a test for each.
+
+164 tests. Still planned in Tier 3: the verified backup copy, ffmpeg presets, subtitle tools
+(extract, convert, shift, local generation), SMART drive health.
+
 ## 0.5.0 - 2026-11-25 (Tier 3: integrity)
 
 Pillar C, the part after "find duplicates".

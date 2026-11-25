@@ -229,6 +229,14 @@ Rules worth knowing:
 - Backup status is a count of files per library under each configured root. It catches a
   backup that never started, one that stopped halfway, and one that is stale. It is not a
   checksum check; manifests and `verify_run` are.
+- Near duplicates answer two different questions and say which one they answered:
+  - **Images**: a 64-bit dHash (9x8 grayscale, one bit per horizontal neighbour pair) compared
+    by Hamming distance. Resized and recompressed copies land within 10 bits; a different photo
+    does not. Capped at 5,000 photos per report.
+  - **Videos**: the same title, year, episode marker and `Part`/`CD` suffix. That is a name
+    comparison, not a fingerprint, and it is labelled as such. Every episode of a series is its
+    own key, so a series is not reported as one giant duplicate group; a two-part film is not a
+    duplicate of itself; a cast note in brackets is not part of the identity.
 
 ## Playback is a hand-off, not a decoder (D8)
 

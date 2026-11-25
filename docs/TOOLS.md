@@ -27,6 +27,7 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `continue [--limit N]` | Recently read, unfinished items |
 | `stats` | Counts, pages, bytes, per-library rows, drives and whether they are online |
 | `dupes [library] [--limit N]` | Exact duplicates: size first, then BLAKE3 |
+| `near-dupes [--limit N]` | Perceptual image groups and possible video duplicates (same title, year and episode) |
 | `hash <key>` | BLAKE3 of one item, stored on the row |
 | `manifest-write <library> [--out path]` | Write a checksum manifest (default under the data home) |
 | `manifest-verify <library> [--manifest path]` | Re-hash and report missing, changed and new files |
@@ -136,6 +137,7 @@ nothing happens.
 | `verify_status` | `every_days` | Per-library due state and what the last run found |
 | `verify_run` | `library`, `every_days`, `force` | Baseline or comparison, recorded per run |
 | `backup_status` | - | Each library against the configured backup roots |
+| `near_duplicates` | `limit` | Perceptual image groups and possible video duplicates |
 
 Tool names are accepted with underscores (`media_catalog`) or dots (`media.catalog`), because some MCP
 hosts validate tool names strictly. Results are JSON text in `content[0].text`; `isError` mirrors
