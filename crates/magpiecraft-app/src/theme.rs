@@ -1,67 +1,59 @@
-//! Visuals: a high-contrast dark theme and a crisp light theme.
+//! Visuals driven by the active skin.
 //!
-//! Fleet rule: high contrast in both themes, never light grey on white in light
-//! mode, and Ctrl + wheel zoom everywhere. No glyph outside the safe set: egui's
-//! default font has no geometric shapes, so a check mark or an arrow would render
-//! as a tofu box. Icons here are painted as vector shapes or written in ASCII.
+//! Every colour comes from the skin palette, so switching skins can never leave a
+//! hard-coded grey on white behind. No glyph outside the safe set: egui's default
+//! font has no geometric shapes, so a check mark or an arrow would render as a tofu
+//! box. Icons are painted as vector shapes or written in ASCII.
 
-use egui::{Color32, FontId, Stroke, TextStyle};
+use crate::skins::{BackdropStyle, CardDecorStyle, SkinPalette};
+use egui::{Color32, CornerRadius, FontId, Shadow, Stroke, TextStyle};
 
-pub const ACCENT: Color32 = Color32::from_rgb(255, 122, 26);
-pub const ACCENT_DIM: Color32 = Color32::from_rgb(160, 82, 24);
-pub const DARK_CANVAS: Color32 = Color32::from_rgb(10, 13, 18);
-pub const DARK_CARD: Color32 = Color32::from_rgb(16, 26, 46);
-pub const DARK_LINE: Color32 = Color32::from_rgb(38, 52, 82);
-pub const DARK_TEXT: Color32 = Color32::from_rgb(245, 247, 250);
-pub const DARK_TEXT_DIM: Color32 = Color32::from_rgb(186, 194, 206);
-pub const LIGHT_CANVAS: Color32 = Color32::from_rgb(248, 250, 252);
-pub const LIGHT_CARD: Color32 = Color32::from_rgb(255, 255, 255);
-pub const LIGHT_LINE: Color32 = Color32::from_rgb(203, 213, 225);
-pub const LIGHT_TEXT: Color32 = Color32::from_rgb(15, 23, 42);
-pub const LIGHT_TEXT_DIM: Color32 = Color32::from_rgb(51, 65, 85);
-
-pub fn harsh_visuals() -> egui::Visuals {
-    let mut v = egui::Visuals::dark();
-    v.panel_fill = DARK_CANVAS;
-    v.window_fill = DARK_CARD;
-    v.extreme_bg_color = Color32::from_rgb(6, 8, 12);
-    v.faint_bg_color = DARK_CARD;
-    v.override_text_color = Some(DARK_TEXT);
-    v.hyperlink_color = ACCENT;
-    v.selection.bg_fill = Color32::from_rgba_unmultiplied(255, 122, 26, 110);
-    v.selection.stroke = Stroke::new(1.0, ACCENT);
-    v.widgets.noninteractive.bg_fill = DARK_CANVAS;
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, DARK_LINE);
-    v.widgets.inactive.bg_fill = DARK_CARD;
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(48, 66, 102));
-    v.widgets.hovered.bg_fill = Color32::from_rgb(24, 38, 64);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.5, ACCENT);
-    v.widgets.active.bg_fill = Color32::from_rgb(30, 46, 76);
-    v.widgets.active.bg_stroke = Stroke::new(1.5, ACCENT);
-    v.window_stroke = Stroke::new(1.0, DARK_LINE);
+/// Full-window visuals for one palette.
+pub fn visuals(palette: &SkinPalette) -> egui::Visuals {
+    let mut v = if palette.is_light {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
+    v.panel_fill = palette.canvas;
+    v.window_fill = palette.card;
+    v.extreme_bg_color = palette.canvas;
+    v.faint_bg_color = palette.card;
+    v.override_text_color = Some(palette.text);
+    v.hyperlink_color = palette.accent_dim;
+    v.selection.bg_fill = Color32::from_rgba_unmultiplied(
+        palette.accent.r(),
+        palette.accent.g(),
+        palette.accent.b(),
+        110,
+    );
+    v.selection.stroke = Stroke::new(1.0, palette.accent);
+    v.widgets.noninteractive.bg_fill = palette.canvas;
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, palette.border);
+    v.widgets.inactive.bg_fill = palette.card;
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, palette.border);
+    v.widgets.hovered.bg_fill = hover_fill(palette);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.5, palette.accent);
+    v.widgets.active.bg_fill = hover_fill(palette);
+    v.widgets.active.bg_stroke = Stroke::new(1.5, palette.accent);
+    v.window_stroke = Stroke::new(1.0, palette.border);
     v
 }
 
-pub fn crisp_light_visuals() -> egui::Visuals {
-    let mut v = egui::Visuals::light();
-    v.panel_fill = LIGHT_CANVAS;
-    v.window_fill = LIGHT_CARD;
-    v.extreme_bg_color = LIGHT_CARD;
-    v.faint_bg_color = LIGHT_CANVAS;
-    v.override_text_color = Some(LIGHT_TEXT);
-    v.hyperlink_color = ACCENT_DIM;
-    v.selection.bg_fill = Color32::from_rgba_unmultiplied(255, 122, 26, 80);
-    v.selection.stroke = Stroke::new(1.0, ACCENT_DIM);
-    v.widgets.noninteractive.bg_fill = LIGHT_CANVAS;
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LIGHT_LINE);
-    v.widgets.inactive.bg_fill = LIGHT_CARD;
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0, LIGHT_LINE);
-    v.widgets.hovered.bg_fill = Color32::from_rgb(241, 245, 249);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.5, ACCENT_DIM);
-    v.widgets.active.bg_fill = Color32::from_rgb(226, 232, 240);
-    v.widgets.active.bg_stroke = Stroke::new(1.5, ACCENT_DIM);
-    v.window_stroke = Stroke::new(1.0, LIGHT_LINE);
-    v
+fn hover_fill(palette: &SkinPalette) -> Color32 {
+    if palette.is_light {
+        lighten(palette.card, 6)
+    } else {
+        lighten(palette.card, 12)
+    }
+}
+
+fn lighten(c: Color32, by: u8) -> Color32 {
+    Color32::from_rgb(
+        c.r().saturating_add(by),
+        c.g().saturating_add(by),
+        c.b().saturating_add(by),
+    )
 }
 
 /// Bump the type ramp so the app is readable on a 1440p screen without zooming.
@@ -85,22 +77,43 @@ pub fn apply_text_styles(ctx: &egui::Context) {
     });
 }
 
-pub fn visuals(dark: bool) -> egui::Visuals {
-    if dark {
-        harsh_visuals()
-    } else {
-        crisp_light_visuals()
-    }
-}
-
-/// A card: filled, hairline border, accent stripe on the left when requested.
-pub fn card(ui: &mut egui::Ui, accent: Option<Color32>, add: impl FnOnce(&mut egui::Ui)) {
-    let dark = ui.visuals().dark_mode;
-    let fill = if dark { DARK_CARD } else { LIGHT_CARD };
-    let line = if dark { DARK_LINE } else { LIGHT_LINE };
+/// A card: filled, decor-styled shadow, accent stripe on the left when requested.
+pub fn card(
+    ui: &mut egui::Ui,
+    palette: &SkinPalette,
+    accent: Option<Color32>,
+    add: impl FnOnce(&mut egui::Ui),
+) {
+    let corner = CornerRadius::same(8);
+    let shadow = match palette.decor {
+        CardDecorStyle::DropShadow => Shadow {
+            offset: [3, 4],
+            blur: 14,
+            spread: 1,
+            color: Color32::from_rgba_unmultiplied(
+                0,
+                0,
+                0,
+                if palette.is_light { 70 } else { 150 },
+            ),
+        },
+        CardDecorStyle::NeonGlow => Shadow {
+            offset: [0, 0],
+            blur: 18,
+            spread: 2,
+            color: Color32::from_rgba_unmultiplied(
+                palette.accent.r(),
+                palette.accent.g(),
+                palette.accent.b(),
+                if palette.is_light { 85 } else { 140 },
+            ),
+        },
+    };
     egui::Frame::NONE
-        .fill(fill)
-        .stroke(Stroke::new(1.0, line))
+        .fill(palette.card)
+        .stroke(Stroke::new(1.0, palette.border))
+        .corner_radius(corner)
+        .shadow(shadow)
         .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {
             if let Some(colour) = accent {
@@ -115,12 +128,65 @@ pub fn card(ui: &mut egui::Ui, accent: Option<Color32>, add: impl FnOnce(&mut eg
         });
 }
 
+/// Paint the skin backdrop over one rect. The caller passes the page area, never
+/// the whole window: the menu bar and search row are painted before this runs and
+/// must not be covered.
+pub fn paint_backdrop(ui: &egui::Ui, palette: &SkinPalette, rect: egui::Rect) {
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 0.0, palette.canvas);
+    match palette.backdrop {
+        BackdropStyle::Solid => {}
+        BackdropStyle::Weave => {
+            // Faint diagonal weave, like book cloth.
+            let color = pattern_line(palette);
+            let step = 26.0;
+            let mut x = rect.left() - rect.height();
+            while x < rect.right() {
+                painter.line_segment(
+                    [
+                        egui::pos2(x, rect.bottom()),
+                        egui::pos2(x + rect.height(), rect.top()),
+                    ],
+                    egui::Stroke::new(1.0, color),
+                );
+                x += step;
+            }
+        }
+        BackdropStyle::Dots => {
+            // Sparse dots, like dust in a projector beam.
+            let color = pattern_line(palette);
+            let step = 34.0;
+            let mut y = rect.top() + 12.0;
+            let mut row = 0;
+            while y < rect.bottom() {
+                let mut x = rect.left() + 12.0 + if row % 2 == 0 { 0.0 } else { step / 2.0 };
+                while x < rect.right() {
+                    painter.circle_filled(egui::pos2(x, y), 1.4, color);
+                    x += step;
+                }
+                y += step;
+                row += 1;
+            }
+        }
+    }
+}
+
+fn pattern_line(palette: &SkinPalette) -> Color32 {
+    // Barely-there lines: visible on close look, invisible at a glance.
+    let (r, g, b) = if palette.is_light {
+        (120, 110, 95)
+    } else {
+        (150, 160, 190)
+    };
+    Color32::from_rgba_unmultiplied(r, g, b, if palette.is_light { 16 } else { 20 })
+}
+
 /// Dimmed secondary text colour for the current theme.
 pub fn dim_text(ui: &egui::Ui) -> Color32 {
     if ui.visuals().dark_mode {
-        DARK_TEXT_DIM
+        Color32::from_rgb(186, 194, 206)
     } else {
-        LIGHT_TEXT_DIM
+        Color32::from_rgb(92, 85, 74)
     }
 }
 
@@ -149,18 +215,17 @@ pub fn handle_ctrl_wheel(ctx: &egui::Context, current: f32) -> Option<f32> {
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::skins::SkinId;
 
     #[test]
-    fn both_themes_have_strong_contrast() {
-        let dark = harsh_visuals();
-        assert_eq!(dark.panel_fill, DARK_CANVAS);
-        assert_eq!(dark.override_text_color, Some(DARK_TEXT));
-        let light = crisp_light_visuals();
-        assert_eq!(light.panel_fill, LIGHT_CANVAS);
-        assert_eq!(light.override_text_color, Some(LIGHT_TEXT));
-        // Light mode text must be near-black, not grey.
-        let text = LIGHT_TEXT;
-        assert!(text.r() < 40 && text.g() < 40 && text.b() < 60);
+    fn visuals_follow_the_palette() {
+        for skin in SkinId::ALL {
+            let p = skin.palette();
+            let v = visuals(&p);
+            assert_eq!(v.panel_fill, p.canvas);
+            assert_eq!(v.override_text_color, Some(p.text));
+            assert_eq!(v.dark_mode, !p.is_light);
+        }
     }
 
     #[test]
@@ -171,6 +236,7 @@ mod tests {
         for (name, src) in [
             ("app.rs", include_str!("app.rs")),
             ("theme.rs", include_str!("theme.rs")),
+            ("skins.rs", include_str!("skins.rs")),
             ("covers.rs", include_str!("covers.rs")),
             ("library.rs", include_str!("library.rs")),
             ("reader.rs", include_str!("reader.rs")),
