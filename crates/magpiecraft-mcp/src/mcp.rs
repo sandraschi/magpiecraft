@@ -40,6 +40,13 @@ pub fn serve(paths: Paths) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The skill folder from a `skill://<name>/SKILL.md` URI. Anything else is None,
+/// which becomes a -32002 instead of an empty success.
+fn skill_name_from_uri(uri: &str) -> Option<&str> {
+    let rest = uri.strip_prefix("skill://")?;
+    rest.strip_suffix("/SKILL.md")
+}
+
 pub fn handle(catalog: &mut Catalog, message: &Value) -> Option<Value> {
     let id = message.get("id")?.clone();
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
@@ -62,7 +69,41 @@ pub fn handle(catalog: &mut Catalog, message: &Value) -> Option<Value> {
             catalog,
             message.get("params").unwrap_or(&Value::Null),
         )),
-        "resources/list" => reply(json!({ "resources": [] })),
+        "resources/list" => {
+            let resources: Vec<Value> = magpiecraft_core::skills::SKILLS
+                .iter()
+                .map(|s| {
+                    json!({
+                        "uri": magpiecraft_core::skills::skill_uri(s.name),
+                        "name": s.name,
+                        "description": s.description(),
+                        "mimeType": "text/markdown",
+                    })
+                })
+                .collect();
+            reply(json!({ "resources": resources }))
+        }
+        "resources/read" => {
+            let uri = message
+                .get("params")
+                .and_then(|p| p.get("uri"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            match skill_name_from_uri(uri).and_then(magpiecraft_core::skills::find) {
+                Some(skill) => reply(json!({
+                    "contents": [{
+                        "uri": uri,
+                        "mimeType": "text/markdown",
+                        "text": skill.body,
+                    }]
+                })),
+                None => json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32002, "message": "Resource not found" },
+                }),
+            }
+        }
         "prompts/list" => reply(json!({ "prompts": [] })),
         "logging/setLevel" => reply(json!({})),
         _ => crate::method_not_found(id),
@@ -109,14 +150,57 @@ mod tests {
         )
         .unwrap();
         let tools = list["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"media_curate"));
         assert!(names.contains(&"media_transform"));
+        assert!(names.contains(&"magpie_skill_read"));
         let call = handle(
             &mut c,
             &json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
                 "name":"media_catalog","arguments":{"operation":"status"}
+            }}),
+        )
+        .unwrap();
+        assert_eq!(call["result"]["isError"], json!(false));
+    }
+
+    #[test]
+    fn resources_serve_every_bundled_skill_byte_for_byte() {
+        let mut c = catalog();
+        let list = handle(
+            &mut c,
+            &json!({"jsonrpc":"2.0","id":4,"method":"resources/list"}),
+        )
+        .unwrap();
+        let resources = list["result"]["resources"].as_array().unwrap();
+        assert_eq!(resources.len(), magpiecraft_core::skills::SKILLS.len());
+        for r in resources {
+            let uri = r["uri"].as_str().unwrap();
+            let read = handle(
+                &mut c,
+                &json!({"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":uri}}),
+            )
+            .unwrap();
+            let text = read["result"]["contents"][0]["text"].as_str().unwrap();
+            let name = uri
+                .strip_prefix("skill://")
+                .unwrap()
+                .strip_suffix("/SKILL.md")
+                .unwrap();
+            let skill = magpiecraft_core::skills::find(name).unwrap();
+            assert_eq!(text, skill.body);
+        }
+        let missing = handle(
+            &mut c,
+            &json!({"jsonrpc":"2.0","id":6,"method":"resources/read","params":{"uri":"skill://nope/SKILL.md"}}),
+        )
+        .unwrap();
+        assert_eq!(missing["error"]["code"], json!(-32002));
+        let call = handle(
+            &mut c,
+            &json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
+                "name":"magpie_skill_read","arguments":{"name":"magpiecraft-video"}
             }}),
         )
         .unwrap();

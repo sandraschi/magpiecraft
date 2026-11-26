@@ -57,7 +57,7 @@ pub fn tools() -> Value {
                 "mature_visible": { "type": "boolean", "description": "settings_set: show mature libraries" },
                 "imgdir_min_pages": { "type": "integer", "description": "settings_set: images needed for a page folder to be a volume" },
                 "theme": { "type": "string", "description": "settings_set: legacy, maps dark/light to the default skin of that mode" },
-                "skin": { "type": "string", "description": "settings_set: magpie-ink, paper-library or neon-shelf (wins over theme)" },
+                "skin": { "type": "string", "description": "settings_set: magpie-ink, paper-library, neon-shelf, forest-stacks, sepia-desk or midnight-archive (wins over theme)" },
                 "zoom": { "type": "number", "description": "settings_set: UI zoom 0.6 to 2.5" }
             }),
             &["operation"]
@@ -156,6 +156,15 @@ pub fn tools() -> Value {
                 "confirm": { "type": "boolean", "description": "apply/undo: must be true; without it the plan is refused" }
             }),
             &["operation"]
+        ),
+        tool(
+            "magpie_skill_read",
+            "Read the bundled skill texts. Without name it lists the skills with their descriptions; \
+             with name it returns the full SKILL.md body. Skills name only tools this server really has.",
+            json!({
+                "name": { "type": "string", "description": "skill folder name, for example magpiecraft-video" }
+            }),
+            &[]
         )
     ])
 }
@@ -194,9 +203,14 @@ fn opt_i32(args: &Value, name: &str) -> Option<i32> {
 /// Translate one tool call into a command. Unknown operations are an error the
 /// caller sees as `isError`, never a silent no-op.
 pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
+    let normalised = name.replace('.', "_");
+    if normalised == "magpie_skill_read" {
+        return Ok(Command::SkillRead {
+            name: opt_str(args, "name"),
+        });
+    }
     let operation = req_str(args, "operation")?;
     let op = operation.to_ascii_lowercase();
-    let normalised = name.replace('.', "_");
     let cmd = match normalised.as_str() {
         "media_catalog" => match op.as_str() {
             "status" => Command::Status,
@@ -424,19 +438,39 @@ mod tests {
         let arr = list.as_array().unwrap();
         assert_eq!(
             arr.len(),
-            6,
-            "media_catalog, media_search, media_read, media_health, media_curate, media_transform"
+            7,
+            "media_catalog, media_search, media_read, media_health, media_curate, media_transform, magpie_skill_read"
         );
         for t in arr {
             let name = t["name"].as_str().unwrap();
-            assert!(name.starts_with("media_"), "{name}");
+            assert!(
+                name.starts_with("media_") || name == "magpie_skill_read",
+                "{name}"
+            );
             assert!(
                 name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
                 "MCP names must be strict: {name}"
             );
             assert!(!t["description"].as_str().unwrap().is_empty());
-            assert!(t["inputSchema"]["properties"]["operation"]["enum"].is_array());
+            if name != "magpie_skill_read" {
+                assert!(t["inputSchema"]["properties"]["operation"]["enum"].is_array());
+            }
         }
+    }
+
+    #[test]
+    fn tool_names_match_the_core_skill_allowlist() {
+        let list = tools();
+        let mut names: Vec<&str> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .collect();
+        names.sort_unstable();
+        let mut known: Vec<&str> = magpiecraft_core::skills::KNOWN_TOOLS.to_vec();
+        known.sort_unstable();
+        assert_eq!(names, known);
     }
 
     #[test]

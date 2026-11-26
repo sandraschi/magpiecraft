@@ -308,6 +308,28 @@ enum Cmd {
         #[arg(long)]
         confirm: bool,
     },
+    /// Bundled skill texts for agents. Lists, shows or exports them.
+    Skills {
+        #[command(subcommand)]
+        op: Option<SkillsOp>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillsOp {
+    /// List the bundled skills.
+    List,
+    /// Read one skill body, for example magpiecraft-video.
+    Show { name: String },
+    /// Write every SKILL.md to a directory (for example ~/.claude/skills).
+    Export {
+        /// Target directory.
+        #[arg(long)]
+        to: String,
+        /// Overwrite existing files.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn print_value(json_mode: bool, command_id: &str, value: &Value) -> i32 {
@@ -366,7 +388,7 @@ fn main() -> std::process::ExitCode {
         }
     };
 
-    let (id, command) = match build(&cli.command) {
+    let (id, command) = match build(&cli.command, cli.json) {
         Ok(pair) => pair,
         Err(e) => {
             eprintln!("[magpiecraft] {e}");
@@ -378,7 +400,7 @@ fn main() -> std::process::ExitCode {
     std::process::ExitCode::from(u8::try_from(code).unwrap_or(1))
 }
 
-fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
+fn build(cmd: &Cmd, json_mode: bool) -> Result<(&'static str, Command), String> {
     let mode = |s: &str| parse_search_mode(s).map_err(|e| e.to_string());
     let direction = |on: bool, off: bool| -> Option<bool> {
         if on {
@@ -694,8 +716,60 @@ fn build(cmd: &Cmd) -> Result<(&'static str, Command), String> {
             };
             (c.id(), c)
         }
+        Cmd::Skills { op } => match op {
+            None | Some(SkillsOp::List) => {
+                let c = Command::SkillRead { name: None };
+                (c.id(), c)
+            }
+            Some(SkillsOp::Show { name }) => {
+                let c = Command::SkillRead {
+                    name: Some(name.clone()),
+                };
+                (c.id(), c)
+            }
+            Some(SkillsOp::Export { to, force }) => {
+                return export_skills(to, *force, json_mode);
+            }
+        },
     };
     Ok(pair)
+}
+
+/// Write every bundled SKILL.md under `<dir>/<name>/SKILL.md` for clients that
+/// read skill folders. Refuses to overwrite without --force. Needs no catalogue.
+fn export_skills(
+    dir: &str,
+    force: bool,
+    json_mode: bool,
+) -> Result<(&'static str, Command), String> {
+    let root = std::path::Path::new(dir.trim());
+    if dir.trim().is_empty() {
+        return Err("export directory is empty".to_string());
+    }
+    let mut written = Vec::new();
+    for skill in magpiecraft_core::skills::SKILLS {
+        let folder = root.join(skill.name);
+        let file = folder.join("SKILL.md");
+        if file.exists() && !force {
+            return Err(format!(
+                "{} exists: re-run with --force to overwrite",
+                file.display()
+            ));
+        }
+        std::fs::create_dir_all(&folder)
+            .map_err(|e| format!("cannot create {}: {e}", folder.display()))?;
+        std::fs::write(&file, skill.body)
+            .map_err(|e| format!("cannot write {}: {e}", file.display()))?;
+        written.push(file.display().to_string());
+    }
+    for path in &written {
+        if json_mode {
+            println!("{path}");
+        } else {
+            println!("wrote {path}");
+        }
+    }
+    Ok(("skill.read", Command::SkillRead { name: None }))
 }
 
 /// The JSON-RPC error envelope used by the MCP loop for unhandled methods.

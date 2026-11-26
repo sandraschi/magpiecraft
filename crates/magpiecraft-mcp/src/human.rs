@@ -680,6 +680,20 @@ pub fn print(command: &str, value: &Value) {
                 .unwrap_or(false),
             n(value, "imgdir_min_pages")
         ),
+        "skill.read" => {
+            if value.get("body").and_then(Value::as_str).is_some() {
+                println!(
+                    "{}\n{}\n\n{}",
+                    s(value, "name"),
+                    s(value, "description"),
+                    value.get("body").and_then(Value::as_str).unwrap_or("")
+                );
+            } else if let Some(list) = value.get("skills").and_then(Value::as_array) {
+                for skill in list {
+                    println!("{:<26} {}", s(skill, "name"), s(skill, "description"));
+                }
+            }
+        }
         _ => match serde_json::to_string(value) {
             Ok(text) => println!("{text}"),
             Err(e) => println!("(unprintable output: {e})"),

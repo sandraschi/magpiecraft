@@ -15,6 +15,7 @@ pub mod model;
 pub mod neardupe;
 pub mod organise;
 pub mod presets;
+pub mod skills;
 pub mod subs;
 pub mod verify;
 

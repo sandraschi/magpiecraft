@@ -16,6 +16,10 @@ pub enum Command {
     Status,
     Tools,
     Sources,
+    /// List bundled skills, or read one skill body by name.
+    SkillRead {
+        name: Option<String>,
+    },
     Libraries,
     LibraryAdd {
         name: String,
@@ -209,6 +213,7 @@ impl Command {
             Command::Status => "status",
             Command::Tools => "tools",
             Command::Sources => "sources",
+            Command::SkillRead { .. } => "skill.read",
             Command::Libraries => "libraries",
             Command::LibraryAdd { .. } => "library.add",
             Command::LibraryRemove { .. } => "library.remove",
@@ -335,6 +340,7 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
             rtl,
         } => catalog.series_set_rtl(&library, &series, rtl),
         Command::Inspect { path } => catalog.inspect(&path),
+        Command::SkillRead { name } => crate::skills::read(name.as_deref()),
         Command::Settings => to_value(catalog.settings().clone()),
         Command::SettingsSet {
             mature_visible,
