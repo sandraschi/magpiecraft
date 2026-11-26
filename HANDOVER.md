@@ -312,3 +312,14 @@ None. Two known limits are deliberate and documented rather than blockers:
   count, root path, per-library Scan, two-step Remove (confirm inline, index rows
   only, files untouched) and Add library. `GoSettings` now refreshes so counts
   are current. Verified by screenshot on the demo home.
+
+## 2026-11-26: standard shell, slice 2 - Help to the 10-item suite
+
+- Help menu now matches CRAFT_MENU_BAR_STANDARD: Command Palette, Keyboard
+  Shortcuts, Getting Started, Usage, Tips and Tricks, Pitfalls and Safety,
+  Planned Extensions, Bundled Skills, Project Files and Docs, Licenses and
+  Notices, About.
+- Help page is a tabbed Help Center (Get started default) with the seven
+  standard content sections plus Skills (honest: none bundled yet, MCP surface
+  named instead) and Project files. HELP.md rewritten to match. Stale Tier-2
+  "not there yet" card is gone.
