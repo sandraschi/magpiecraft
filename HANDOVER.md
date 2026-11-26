@@ -377,6 +377,22 @@ None. Two known limits are deliberate and documented rather than blockers:
 - Provider switches clear the model (no blind defaults). Agentic DE coop card
   with the MCP stdio command. start.ps1 gains -Mcp.
 
+## 2026-11-26: Tier 3 SMART drive health
+
+- Probe: Windows Storage API via an invoked powershell.exe (never linked),
+  disks plus volumes with disk numbers; USB enclosures report null counters,
+  rendered as unknown. smartctl is used when present (later slice).
+- health::smart: parse + library-root to drive mapping + warnings (unhealthy
+  status, >=90% wear, >=60C, nonzero error counters, <5% or <10 GB free with
+  getting-full/nearly-full severity, unmapped roots). Tests on recorded live
+  output.
+- Command::DriveHealth, MCP media_health op drive_health, CLI `drives`,
+  human-readable output, Stats page Drive health card with worker thread
+  (Check drives now). Live run flagged Sandra's nearly-full volumes (F: and K:
+  at ~200 MB).
+- Staged exe refresh skipped: Sandra is running the app right now (PID from
+  19:08); start.ps1 rebuilds on her next launch.
+
 ## 2026-11-26: standard shell, slice 4d part 2 - chat dock
 
 - Right dock (360px bounded, wrap, Send right of input), Ctrl+J, Window menu,

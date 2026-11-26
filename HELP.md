@@ -30,6 +30,7 @@ No telemetry, no cloud account. This file mirrors the in-app Help Center.
 - Subtitles: list, shift, convert and extract sidecar files next to your films.
 - Convert plans: FFmpeg presets turned into reviewable plans, applied through
   the same journal as renames.
+- Drives: physical disks behind the libraries with health warnings.
 
 ## Usage
 

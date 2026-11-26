@@ -11,6 +11,8 @@
 //! Tabs, not spaces, are the field separator, so file names with spaces need no
 //! quoting or escaping.
 
+pub mod smart;
+
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};

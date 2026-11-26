@@ -11,6 +11,8 @@ workspace = true
 
 [dependencies]
 magpiecraft-scan = { path = "../magpiecraft-scan" }
+magpiecraft-tools = { path = "../magpiecraft-tools" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 blake3.workspace = true

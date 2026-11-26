@@ -229,6 +229,8 @@ pub enum Command {
         id: String,
         confirm: bool,
     },
+    /// Physical disks the libraries sit on, with health warnings.
+    DriveHealth,
 }
 
 impl Command {
@@ -290,6 +292,7 @@ impl Command {
             Command::ApplyPlan { .. } => "apply",
             Command::Journals => "journals",
             Command::Undo { .. } => "undo",
+            Command::DriveHealth => "drive.health",
         }
     }
 }
@@ -596,7 +599,21 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
         Command::ApplyPlan { id, confirm } => catalog.apply_plan(&id, confirm),
         Command::Journals => catalog.journals(),
         Command::Undo { id, confirm } => catalog.undo(&id, confirm),
+        Command::DriveHealth => drive_health_report(catalog),
     }
+}
+
+/// Physical disks behind every library root, with warnings for anything that
+/// looks sick or nearly full. A slow or missing counter set degrades to
+/// unknown, never to invented zeros.
+fn drive_health_report(catalog: &mut Catalog) -> MagpieResult<Value> {
+    let libraries = catalog
+        .libraries()?
+        .into_iter()
+        .map(|lib| (lib.name, lib.root))
+        .collect::<Vec<_>>();
+    let report = magpiecraft_health::smart::drive_health(&libraries)?;
+    to_value(report)
 }
 
 /// Names accepted by the CLI and MCP for a search mode.

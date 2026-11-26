@@ -414,6 +414,63 @@ pub fn format_secs(secs: u64) -> String {
     }
 }
 
+// ------------------------------------------------------- drive health
+/// Windows Storage API probe: physical disks (health, counters where the
+/// enclosure reports them) plus volumes with their disk numbers, so library
+/// roots resolve to a physical drive. USB enclosures usually report no
+/// counters; those fields come back null and are rendered as unknown, never
+/// as zero. Needs no smartctl and no admin rights for the base data.
+pub fn storage_layout() -> ToolResult<serde_json::Value> {
+    const SCRIPT: &str = "$disks = Get-PhysicalDisk | ForEach-Object { $d = $_; $c = $null; try { $c = Get-StorageReliabilityCounter -PhysicalDisk $d -ErrorAction Stop } catch {}; [pscustomobject]@{ id = $d.DeviceId; name = $d.FriendlyName; media = $d.MediaType.ToString(); size = $d.Size; health = $d.HealthStatus.ToString(); status = $d.OperationalStatus.ToString(); wear = $c.Wear; temp = $c.Temperature; temp_max = $c.TemperatureMax; read_err = $c.ReadErrorsTotal; write_err = $c.WriteErrorsTotal; hours = $c.PowerOnHours } }; $vols = Get-Volume | Where-Object { $_.DriveLetter } | ForEach-Object { $p = Get-Partition -DriveLetter $_.DriveLetter -ErrorAction SilentlyContinue | Select-Object -First 1; [pscustomobject]@{ letter = $_.DriveLetter.ToString(); label = $_.FileSystemLabel; size = $_.Size; free = $_.SizeRemaining; disk = if ($p) { $p.DiskNumber } else { $null } } }; @{ disks = @($disks); volumes = @($vols) } | ConvertTo-Json -Depth 4 -Compress";
+    let mut child = Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", SCRIPT])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ToolError::Missing("powershell.exe is not on PATH".to_string())
+            } else {
+                ToolError::Io(e.to_string())
+            }
+        })?;
+    // A sick drive must not hang the caller: poll and kill after 30 seconds.
+    let mut waited = 0;
+    let status = loop {
+        match child.try_wait().map_err(|e| ToolError::Io(e.to_string()))? {
+            Some(status) => break status,
+            None => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                waited += 1;
+                if waited > 300 {
+                    let _ = child.kill();
+                    return Err(ToolError::Failed(
+                        "powershell".to_string(),
+                        "storage probe timed out after 30s".to_string(),
+                    ));
+                }
+            }
+        }
+    };
+    let mut stdout = String::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        use std::io::Read as _;
+        let _ = pipe.read_to_string(&mut stdout);
+    }
+    if !status.success() {
+        let mut stderr = String::new();
+        if let Some(mut pipe) = child.stderr.take() {
+            use std::io::Read as _;
+            let _ = pipe.read_to_string(&mut stderr);
+        }
+        return Err(ToolError::Failed(
+            "powershell".to_string(),
+            stderr.trim().to_string(),
+        ));
+    }
+    serde_json::from_str(&stdout).map_err(|e| ToolError::Parse(e.to_string()))
+}
+
 // ---------------------------------------------------------------- ffprobe
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StreamInfo {
