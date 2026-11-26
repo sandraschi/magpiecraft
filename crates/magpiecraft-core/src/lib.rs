@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod command;
 pub mod config;
 pub mod cover;
+pub mod drives;
 pub mod error;
 pub mod images;
 pub mod llm;

@@ -90,6 +90,26 @@ pub fn print(command: &str, value: &Value) {
                 println!("no libraries yet: magpiecraft-mcp library-add <name> <root> --kind manga")
             }
         },
+        "propose.libraries" => {
+            if let Some(list) = value.get("proposals").and_then(Value::as_array) {
+                for p in list {
+                    println!(
+                        "{:<22} {:<10} {:>5}%  {}  ({})",
+                        s(p, "name"),
+                        p.get("kind").and_then(Value::as_str).unwrap_or("unknown"),
+                        (p.get("confidence").and_then(Value::as_f64).unwrap_or(0.0) * 100.0).round()
+                            as u64,
+                        s(p, "reason"),
+                        s(p, "path")
+                    );
+                }
+            }
+            if let Some(warnings) = value.get("warnings").and_then(Value::as_array) {
+                for w in warnings.iter().filter_map(Value::as_str) {
+                    println!("! {w}");
+                }
+            }
+        }
         "library.add" => println!(
             "added library {} (id {}) at {}",
             s(value, "name"),

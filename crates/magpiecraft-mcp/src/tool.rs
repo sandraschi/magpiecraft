@@ -37,7 +37,7 @@ pub fn tools() -> Value {
             "Inventory of the user's own media. Operations: status (version, home, counts, external tools), \
              libraries, browse (one folder, or all libraries when key is omitted), stats (counts, pages, bytes, \
              drives), scan (incremental by path, size and mtime; full re-reads everything), series, continue \
-             (recently read), library_add, library_remove (requires confirm), settings, settings_set. \
+             (recently read), propose_libraries (suggest libraries per drive folder), library_add, library_remove (requires confirm), settings, settings_set. \
              Scanning is read-only on the collection. Nothing is ever downloaded.",
             json!({
                 "operation": ops(&[
@@ -49,6 +49,8 @@ pub fn tools() -> Value {
                 "full": { "type": "boolean", "description": "scan: re-read unchanged files too" },
                 "name": { "type": "string", "description": "library_add or library_remove: library name" },
                 "root": { "type": "string", "description": "library_add: absolute folder that holds the library" },
+                "roots": { "type": "array", "items": {"type": "string"}, "description": "propose_libraries: drive roots, default is Settings" },
+                "roots": { "type": "array", "items": {"type": "string"}, "description": "propose_libraries: drive roots, default is Settings" },
                 "kind": { "type": "string", "description": "library_add: comics, manga, magazines, video, audio, ebook, photo, other" },
                 "mature": { "type": "boolean", "description": "library_add: flag the library as mature (hidden by default)" },
                 "rtl": { "type": ["boolean", "null"], "description": "library_add: force reading direction" },
@@ -58,7 +60,9 @@ pub fn tools() -> Value {
                 "imgdir_min_pages": { "type": "integer", "description": "settings_set: images needed for a page folder to be a volume" },
                 "theme": { "type": "string", "description": "settings_set: legacy, maps dark/light to the default skin of that mode" },
                 "skin": { "type": "string", "description": "settings_set: magpie-ink, paper-library, neon-shelf, forest-stacks, sepia-desk or midnight-archive (wins over theme)" },
-                "zoom": { "type": "number", "description": "settings_set: UI zoom 0.6 to 2.5" }
+                "zoom": { "type": "number", "description": "settings_set: UI zoom 0.6 to 2.5" },
+                "drive_roots": { "type": "array", "items": {"type": "string"}, "description": "settings_set: drive roots holding a media folder each" },
+                "media_folder": { "type": "string", "description": "settings_set: level-1 folder name on every media drive" }
             }),
             &["operation"]
         ),
@@ -320,6 +324,15 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
                 name: req_str(args, "name")?,
                 confirm: opt_bool(args, "confirm").unwrap_or(false),
             },
+            "propose_libraries" | "propose.libraries" => Command::ProposeLibraries {
+                roots: args.get("roots").and_then(|v| v.as_array()).map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(str::to_string)
+                        .collect()
+                }),
+                media_folder: opt_str(args, "media_folder"),
+            },
             "settings" => Command::Settings,
             "settings_set" | "settings.set" => Command::SettingsSet {
                 mature_visible: opt_bool(args, "mature_visible"),
@@ -327,6 +340,13 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
                 theme: opt_str(args, "theme"),
                 skin: opt_str(args, "skin"),
                 zoom: args.get("zoom").and_then(Value::as_f64).map(|z| z as f32),
+                drive_roots: args.get("drive_roots").and_then(|v| v.as_array()).map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(str::to_string)
+                        .collect()
+                }),
+                media_folder: opt_str(args, "media_folder"),
             },
             other => return Err(format!("unknown media_catalog operation: {other}")),
         },
@@ -601,6 +621,15 @@ mod tests {
         .unwrap();
         assert_eq!(convert.id(), "convert.plan");
         assert!(to_command("media_transform", &json!({"operation":"nope"})).is_err());
+        let propose = to_command(
+            "media_catalog",
+            &json!({"operation":"propose_libraries","roots":["E:/"]}),
+        )
+        .unwrap();
+        assert_eq!(propose.id(), "propose.libraries");
+        let dotted =
+            to_command("media.catalog", &json!({"operation":"propose.libraries"})).unwrap();
+        assert_eq!(dotted.id(), "propose.libraries");
         assert!(to_command("media_catalog", &json!({"operation":"download_everything"})).is_err());
         assert!(to_command("media_catalog", &json!({})).is_err());
         let generate = to_command(

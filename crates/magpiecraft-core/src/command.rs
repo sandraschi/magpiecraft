@@ -139,6 +139,8 @@ pub enum Command {
         theme: Option<String>,
         skin: Option<String>,
         zoom: Option<f32>,
+        drive_roots: Option<Vec<String>>,
+        media_folder: Option<String>,
     },
     /// Items whose filename parse was uncertain.
     Review {
@@ -238,6 +240,11 @@ pub enum Command {
     },
     /// Physical disks the libraries sit on, with health warnings.
     DriveHealth,
+    /// Propose one library per level-2 folder under each drive root.
+    ProposeLibraries {
+        roots: Option<Vec<String>>,
+        media_folder: Option<String>,
+    },
 }
 
 impl Command {
@@ -301,6 +308,7 @@ impl Command {
             Command::Journals => "journals",
             Command::Undo { .. } => "undo",
             Command::DriveHealth => "drive.health",
+            Command::ProposeLibraries { .. } => "propose.libraries",
         }
     }
 }
@@ -541,6 +549,8 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
             theme,
             skin,
             zoom,
+            drive_roots,
+            media_folder,
         } => {
             let mut settings = catalog.settings().clone();
             if let Some(v) = mature_visible {
@@ -563,6 +573,12 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
             }
             if let Some(v) = zoom {
                 settings.zoom = v;
+            }
+            if let Some(roots) = drive_roots {
+                settings.drive_roots = roots;
+            }
+            if let Some(folder) = media_folder {
+                settings.media_folder = folder;
             }
             to_value(catalog.set_settings(settings)?)
         }
@@ -614,6 +630,28 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
         Command::Journals => catalog.journals(),
         Command::Undo { id, confirm } => catalog.undo(&id, confirm),
         Command::DriveHealth => drive_health_report(catalog),
+        Command::ProposeLibraries {
+            roots,
+            media_folder,
+        } => {
+            let settings = catalog.settings().clone();
+            let folder = media_folder
+                .as_deref()
+                .map(str::trim)
+                .filter(|f| !f.is_empty())
+                .unwrap_or(&settings.media_folder)
+                .to_string();
+            let resolved = match roots {
+                Some(explicit) if !explicit.is_empty() => explicit,
+                _ => settings.drive_roots.clone(),
+            };
+            if resolved.is_empty() {
+                return Err(MagpieError::invalid(
+                    "no drive roots: set them in Settings or pass roots".to_string(),
+                ));
+            }
+            to_value(crate::drives::propose_libraries(&resolved, &folder))
+        }
     }
 }
 
@@ -806,6 +844,30 @@ mod tests {
             },
         );
         assert_eq!(empty["ok"], json!(false));
+    }
+
+    #[test]
+    fn propose_libraries_needs_roots_and_warns_on_missing() {
+        let mut c = catalog();
+        let none = dispatch(
+            &mut c,
+            Command::ProposeLibraries {
+                roots: None,
+                media_folder: None,
+            },
+        );
+        assert_eq!(none["ok"], json!(false));
+        assert_eq!(none["error_type"], json!("invalid"));
+        let missing = dispatch(
+            &mut c,
+            Command::ProposeLibraries {
+                roots: Some(vec!["Z:/Nope".to_string()]),
+                media_folder: None,
+            },
+        );
+        assert_eq!(missing["ok"], json!(true));
+        assert!(!missing["warnings"].as_array().unwrap().is_empty());
+        assert!(missing["proposals"].as_array().unwrap().is_empty());
     }
 
     #[test]

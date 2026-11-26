@@ -184,6 +184,11 @@ pub struct Settings {
     pub border_width: f32,
     /// Backdrop pattern strength, 0.0 (solid) to 2.0 (double). Tuned in Settings.
     pub backdrop_amount: f32,
+    /// Drive roots holding a level-1 media folder each, for example E:\ plus
+    /// F:\ plus K:\ plus L:\. The global scan proposes one library per level-2 folder.
+    pub drive_roots: Vec<String>,
+    /// Level-1 folder name on every media drive. Default: Multimedia Files.
+    pub media_folder: String,
 }
 
 impl Default for Settings {
@@ -205,6 +210,8 @@ impl Default for Settings {
             backup_roots: Vec::new(),
             border_width: 1.0,
             backdrop_amount: 1.0,
+            drive_roots: Vec::new(),
+            media_folder: "Multimedia Files".to_string(),
         }
     }
 }
@@ -224,6 +231,17 @@ impl Settings {
         self.render_cache_mb = self.render_cache_mb.clamp(64, 50_000);
         self.border_width = self.border_width.clamp(1.0, 3.0);
         self.backdrop_amount = self.backdrop_amount.clamp(0.0, 2.0);
+        self.drive_roots = self
+            .drive_roots
+            .iter()
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty())
+            .collect();
+        if self.media_folder.trim().is_empty() {
+            self.media_folder = "Multimedia Files".to_string();
+        } else {
+            self.media_folder = self.media_folder.trim().to_string();
+        }
         if SkinId::parse(&self.skin).is_none() {
             self.skin = SkinId::fallback().id().to_string();
         }
@@ -325,6 +343,18 @@ mod tests {
         assert_eq!(s.skin, "neon", "a known alias survives sanitising");
         assert_eq!(s.theme, "dark", "the theme follows the skin");
         assert_eq!(s.imgdir_min_pages, 1);
+    }
+
+    #[test]
+    fn drive_roots_trim_and_media_folder_defaults() {
+        let s = Settings {
+            drive_roots: vec![" E:/ ".to_string(), String::new(), "F:/".to_string()],
+            media_folder: "  ".to_string(),
+            ..Settings::default()
+        }
+        .sanitised();
+        assert_eq!(s.drive_roots, vec!["E:/".to_string(), "F:/".to_string()]);
+        assert_eq!(s.media_folder, "Multimedia Files");
     }
 
     #[test]

@@ -65,6 +65,14 @@ enum Cmd {
         #[arg(long, conflicts_with = "rtl")]
         ltr: bool,
     },
+    /// Propose one library per level-2 folder under each drive root. Nothing is created.
+    ProposeLibraries {
+        /// Drive roots, for example E:\. Default is the Settings drives.
+        roots: Vec<String>,
+        /// Level-1 folder name on every drive. Default is the Settings folder.
+        #[arg(long)]
+        media_folder: Option<String>,
+    },
     /// Remove a library from the index. The files are never touched.
     LibraryRemove {
         name: String,
@@ -189,6 +197,12 @@ enum Cmd {
         skin: Option<String>,
         #[arg(long)]
         zoom: Option<f32>,
+        /// Drive roots holding a media folder each, for example E:\ F:\.
+        #[arg(long)]
+        drive_roots: Vec<String>,
+        /// Level-1 folder name on every media drive.
+        #[arg(long)]
+        media_folder: Option<String>,
     },
     /// Synthetic scan benchmark. Writes only under the data home.
     BenchScan {
@@ -486,6 +500,20 @@ fn build(cmd: &Cmd, json_mode: bool) -> Result<(&'static str, Command), String> 
             };
             (c.id(), c)
         }
+        Cmd::ProposeLibraries {
+            roots,
+            media_folder,
+        } => {
+            let c = Command::ProposeLibraries {
+                roots: if roots.is_empty() {
+                    None
+                } else {
+                    Some(roots.clone())
+                },
+                media_folder: media_folder.clone(),
+            };
+            (c.id(), c)
+        }
         Cmd::LibraryRemove { name, confirm } => {
             let c = Command::LibraryRemove {
                 name: name.clone(),
@@ -634,6 +662,8 @@ fn build(cmd: &Cmd, json_mode: bool) -> Result<(&'static str, Command), String> 
             theme,
             skin,
             zoom,
+            drive_roots,
+            media_folder,
         } => {
             let c = Command::SettingsSet {
                 mature_visible: *mature,
@@ -641,6 +671,12 @@ fn build(cmd: &Cmd, json_mode: bool) -> Result<(&'static str, Command), String> 
                 theme: theme.clone(),
                 skin: skin.clone(),
                 zoom: *zoom,
+                drive_roots: if drive_roots.is_empty() {
+                    None
+                } else {
+                    Some(drive_roots.clone())
+                },
+                media_folder: media_folder.clone(),
             };
             (c.id(), c)
         }
