@@ -33,16 +33,29 @@ pub enum SkinId {
     MagpieInk,
     PaperLibrary,
     NeonShelf,
+    ForestStacks,
+    SepiaDesk,
+    MidnightArchive,
 }
 
 impl SkinId {
-    pub const ALL: [Self; 3] = [Self::MagpieInk, Self::PaperLibrary, Self::NeonShelf];
+    pub const ALL: [Self; 6] = [
+        Self::MagpieInk,
+        Self::PaperLibrary,
+        Self::NeonShelf,
+        Self::ForestStacks,
+        Self::SepiaDesk,
+        Self::MidnightArchive,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
             SkinId::MagpieInk => "magpie-ink",
             SkinId::PaperLibrary => "paper-library",
             SkinId::NeonShelf => "neon-shelf",
+            SkinId::ForestStacks => "forest-stacks",
+            SkinId::SepiaDesk => "sepia-desk",
+            SkinId::MidnightArchive => "midnight-archive",
         }
     }
 
@@ -51,6 +64,9 @@ impl SkinId {
             SkinId::MagpieInk => "Magpie Ink",
             SkinId::PaperLibrary => "Paper Library",
             SkinId::NeonShelf => "Neon Shelf",
+            SkinId::ForestStacks => "Forest Stacks",
+            SkinId::SepiaDesk => "Sepia Desk",
+            SkinId::MidnightArchive => "Midnight Archive",
         }
     }
 
@@ -59,6 +75,9 @@ impl SkinId {
             SkinId::MagpieInk => "High-contrast dark, the night reader",
             SkinId::PaperLibrary => "Warm paper light, for daylight cataloguing",
             SkinId::NeonShelf => "Black glass with neon, the shelf at midnight",
+            SkinId::ForestStacks => "Deep green dark, reading under the trees",
+            SkinId::SepiaDesk => "Aged paper sepia, the archive desk",
+            SkinId::MidnightArchive => "Deep blue dark, the vault after hours",
         }
     }
 
@@ -67,6 +86,9 @@ impl SkinId {
             "magpie-ink" | "ink" | "dark" => Some(SkinId::MagpieInk),
             "paper-library" | "paper" | "light" => Some(SkinId::PaperLibrary),
             "neon-shelf" | "neon" => Some(SkinId::NeonShelf),
+            "forest-stacks" | "forest" => Some(SkinId::ForestStacks),
+            "sepia-desk" | "sepia" => Some(SkinId::SepiaDesk),
+            "midnight-archive" | "midnight" | "archive" => Some(SkinId::MidnightArchive),
             _ => None,
         }
     }
@@ -132,6 +154,66 @@ impl SkinId {
                 kind_other: Color32::from_rgb(150, 158, 178),
                 decor: CardDecorStyle::NeonGlow,
                 backdrop: BackdropStyle::Dots,
+            },
+            SkinId::ForestStacks => SkinPalette {
+                is_light: false,
+                canvas: Color32::from_rgb(11, 20, 16),
+                card: Color32::from_rgb(21, 36, 25),
+                border: Color32::from_rgb(44, 70, 52),
+                text: Color32::from_rgb(241, 246, 238),
+                text_dim: Color32::from_rgb(185, 203, 182),
+                accent: Color32::from_rgb(232, 163, 61),
+                accent_dim: Color32::from_rgb(160, 111, 40),
+                kind_comics: Color32::from_rgb(255, 138, 77),
+                kind_manga: Color32::from_rgb(240, 85, 155),
+                kind_magazines: Color32::from_rgb(62, 198, 184),
+                kind_video: Color32::from_rgb(94, 168, 255),
+                kind_audio: Color32::from_rgb(74, 222, 128),
+                kind_ebook: Color32::from_rgb(229, 197, 59),
+                kind_photo: Color32::from_rgb(180, 140, 255),
+                kind_other: Color32::from_rgb(154, 163, 178),
+                decor: CardDecorStyle::DropShadow,
+                backdrop: BackdropStyle::Dots,
+            },
+            SkinId::SepiaDesk => SkinPalette {
+                is_light: true,
+                canvas: Color32::from_rgb(236, 225, 203),
+                card: Color32::from_rgb(250, 244, 230),
+                border: Color32::from_rgb(205, 187, 153),
+                text: Color32::from_rgb(44, 35, 20),
+                text_dim: Color32::from_rgb(106, 91, 66),
+                accent: Color32::from_rgb(163, 77, 27),
+                accent_dim: Color32::from_rgb(124, 58, 18),
+                kind_comics: Color32::from_rgb(184, 78, 26),
+                kind_manga: Color32::from_rgb(169, 43, 107),
+                kind_magazines: Color32::from_rgb(14, 110, 98),
+                kind_video: Color32::from_rgb(29, 95, 184),
+                kind_audio: Color32::from_rgb(29, 133, 67),
+                kind_ebook: Color32::from_rgb(122, 97, 22),
+                kind_photo: Color32::from_rgb(106, 79, 192),
+                kind_other: Color32::from_rgb(90, 99, 110),
+                decor: CardDecorStyle::DropShadow,
+                backdrop: BackdropStyle::Solid,
+            },
+            SkinId::MidnightArchive => SkinPalette {
+                is_light: false,
+                canvas: Color32::from_rgb(8, 12, 23),
+                card: Color32::from_rgb(16, 26, 51),
+                border: Color32::from_rgb(40, 57, 95),
+                text: Color32::from_rgb(236, 239, 250),
+                text_dim: Color32::from_rgb(166, 180, 212),
+                accent: Color32::from_rgb(122, 165, 255),
+                accent_dim: Color32::from_rgb(62, 107, 196),
+                kind_comics: Color32::from_rgb(255, 154, 92),
+                kind_manga: Color32::from_rgb(255, 92, 168),
+                kind_magazines: Color32::from_rgb(79, 216, 196),
+                kind_video: Color32::from_rgb(110, 173, 255),
+                kind_audio: Color32::from_rgb(74, 222, 128),
+                kind_ebook: Color32::from_rgb(232, 197, 59),
+                kind_photo: Color32::from_rgb(183, 148, 255),
+                kind_other: Color32::from_rgb(152, 162, 184),
+                decor: CardDecorStyle::DropShadow,
+                backdrop: BackdropStyle::Weave,
             },
         }
     }

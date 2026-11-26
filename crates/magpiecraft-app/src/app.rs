@@ -242,6 +242,14 @@ impl MagpieApp {
         self.skin.palette()
     }
 
+    /// User-tuned decor on top of the skin, from Settings.
+    fn decor(&self) -> theme::DecorOpts {
+        theme::DecorOpts {
+            border_width: self.settings.border_width,
+            backdrop_amount: self.settings.backdrop_amount,
+        }
+    }
+
     fn set_skin(&mut self, skin: SkinId) {
         self.skin = skin;
         self.settings.skin = skin.id().to_string();
@@ -765,7 +773,7 @@ impl MagpieApp {
     fn organise_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
         let palette = self.palette();
         let view = self.organise.clone().unwrap_or_default();
-        theme::card(ui, &palette, Some(palette.accent), |ui| {
+        theme::card(ui, &palette, Some(palette.accent), &self.decor(), |ui| {
             ui.label(egui::RichText::new("Organise").size(19.0).strong());
             ui.label(
                 "Renaming is a plan: you read the diff, then apply it. Every applied plan is journalled \
@@ -796,7 +804,7 @@ impl MagpieApp {
         ui.add_space(8.0);
 
         if !view.review.is_empty() {
-            theme::card(ui, &palette, None, |ui| {
+            theme::card(ui, &palette, None, &self.decor(), |ui| {
                 ui.label(egui::RichText::new("Needs a human").strong());
                 ui.label(
                     egui::RichText::new(
@@ -822,7 +830,7 @@ impl MagpieApp {
         }
 
         if !view.plans.is_empty() {
-            theme::card(ui, &palette, None, |ui| {
+            theme::card(ui, &palette, None, &self.decor(), |ui| {
                 ui.label(egui::RichText::new("Plans waiting").strong());
                 for plan in view.plans.iter().take(10) {
                     let id = plan["id"].as_str().unwrap_or("");
@@ -851,7 +859,7 @@ impl MagpieApp {
         }
 
         if !view.journals.is_empty() {
-            theme::card(ui, &palette, None, |ui| {
+            theme::card(ui, &palette, None, &self.decor(), |ui| {
                 ui.label(egui::RichText::new("Applied plans").strong());
                 for journal in view.journals.iter().take(10) {
                     let id = journal["id"].as_str().unwrap_or("");
@@ -873,9 +881,9 @@ impl MagpieApp {
         }
     }
 
-    fn settings_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
+    fn settings_page(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
         let palette = self.palette();
-        theme::card(ui, &palette, Some(palette.accent), |ui| {
+        theme::card(ui, &palette, Some(palette.accent), &self.decor(), |ui| {
             ui.label(egui::RichText::new("Libraries").size(19.0).strong());
             ui.label(
                 egui::RichText::new(
@@ -955,7 +963,7 @@ impl MagpieApp {
             }
         });
         ui.add_space(8.0);
-        theme::card(ui, &palette, Some(palette.accent), |ui| {
+        theme::card(ui, &palette, Some(palette.accent), &self.decor(), |ui| {
             ui.label(egui::RichText::new("Settings").size(19.0).strong());
             ui.add_space(4.0);
             let mut mature = self.settings.mature_visible;
@@ -988,7 +996,7 @@ impl MagpieApp {
             ui.add_space(6.0);
             ui.label(egui::RichText::new("Skin").size(16.0).strong());
             ui.label(
-                egui::RichText::new("Three curated palettes. Everything repaints at once.")
+                egui::RichText::new("Six curated palettes. Everything repaints at once.")
                     .color(theme::dim_text(ui)),
             );
             ui.add_space(2.0);
@@ -1026,9 +1034,32 @@ impl MagpieApp {
                 }
                 ui.label("Ctrl + mouse wheel zooms anywhere");
             });
+            let mut zoom_pct = self.zoom * 100.0;
+            if ui
+                .add(egui::Slider::new(&mut zoom_pct, 75.0..=150.0).text("zoom %"))
+                .changed()
+            {
+                self.set_zoom(ctx, zoom_pct / 100.0);
+            }
+            let mut border = self.settings.border_width;
+            if ui
+                .add(egui::Slider::new(&mut border, 1.0..=3.0).text("card border"))
+                .changed()
+            {
+                self.settings.border_width = border;
+                self.save_settings();
+            }
+            let mut backdrop = self.settings.backdrop_amount * 100.0;
+            if ui
+                .add(egui::Slider::new(&mut backdrop, 0.0..=200.0).text("backdrop pattern %"))
+                .changed()
+            {
+                self.settings.backdrop_amount = backdrop / 100.0;
+                self.save_settings();
+            }
         });
         ui.add_space(8.0);
-        theme::card(ui, &palette, None, |ui| {
+        theme::card(ui, &palette, None, &self.decor(), |ui| {
             ui.label(egui::RichText::new("Storage").strong());
             ui.label(format!("Home: {}", self.catalog.paths().home().display()));
             ui.label(format!(
@@ -1051,7 +1082,7 @@ impl MagpieApp {
     fn stats_page(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
         let stats = self.stats.clone().unwrap_or_default();
-        theme::card(ui, &palette, Some(palette.accent), |ui| {
+        theme::card(ui, &palette, Some(palette.accent), &self.decor(), |ui| {
             ui.label(egui::RichText::new("Statistics").size(19.0).strong());
             ui.label(format!(
                 "{} libraries, {} items, {} pages, {} series",
@@ -1072,7 +1103,7 @@ impl MagpieApp {
         });
         ui.add_space(8.0);
         for lib in &stats.per_library {
-            theme::card(ui, &palette, None, |ui| {
+            theme::card(ui, &palette, None, &self.decor(), |ui| {
                 ui.label(egui::RichText::new(&lib.name).strong());
                 ui.label(format!(
                     "{} items  {} pages  {}  {} dirs  ({})",
@@ -1089,7 +1120,7 @@ impl MagpieApp {
             ui.add_space(4.0);
         }
         for drive in &stats.drives {
-            theme::card(ui, &palette, None, |ui| {
+            theme::card(ui, &palette, None, &self.decor(), |ui| {
                 ui.label(format!(
                     "Drive {} ({})",
                     drive.volume,
@@ -1104,7 +1135,7 @@ impl MagpieApp {
             });
             ui.add_space(4.0);
         }
-        theme::card(ui, &palette, None, |ui| {
+        theme::card(ui, &palette, None, &self.decor(), |ui| {
             ui.label(egui::RichText::new("External tools").strong());
             let report = self.catalog.tools_report();
             for (name, label) in [
@@ -1153,7 +1184,7 @@ impl MagpieApp {
     }
 
     fn help_card(&self, ui: &mut egui::Ui, palette: &SkinPalette, title: &str, lines: &[&str]) {
-        theme::card(ui, palette, None, |ui| {
+        theme::card(ui, palette, None, &self.decor(), |ui| {
             ui.label(egui::RichText::new(title).strong());
             for line in lines {
                 ui.label(*line);
@@ -1407,6 +1438,9 @@ impl MagpieApp {
                             ("Skin: Magpie Ink", Act::Skin(SkinId::MagpieInk)),
                             ("Skin: Paper Library", Act::Skin(SkinId::PaperLibrary)),
                             ("Skin: Neon Shelf", Act::Skin(SkinId::NeonShelf)),
+                            ("Skin: Forest Stacks", Act::Skin(SkinId::ForestStacks)),
+                            ("Skin: Sepia Desk", Act::Skin(SkinId::SepiaDesk)),
+                            ("Skin: Midnight Archive", Act::Skin(SkinId::MidnightArchive)),
                             ("Statistics", Act::GoStats),
                             ("Organise", Act::GoOrganise),
                             ("Plan renames", Act::PlanRename),
@@ -1593,7 +1627,7 @@ impl eframe::App for MagpieApp {
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
             let palette = self.palette();
-            theme::paint_backdrop(ui, &palette, content);
+            theme::paint_backdrop(ui, &palette, content, &self.decor());
             match self.page {
                 Page::Browse => {
                     let nav = egui::ScrollArea::vertical()
@@ -1665,7 +1699,7 @@ impl eframe::App for MagpieApp {
                 Page::Settings => {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
-                        .show(ui, |ui| self.settings_page(ui, &mut actions));
+                        .show(ui, |ui| self.settings_page(&ctx, ui, &mut actions));
                 }
                 Page::Help => {
                     egui::ScrollArea::vertical()

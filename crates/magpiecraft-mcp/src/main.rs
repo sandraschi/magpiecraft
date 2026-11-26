@@ -184,7 +184,7 @@ enum Cmd {
         imgdir_min_pages: Option<usize>,
         #[arg(long)]
         theme: Option<String>,
-        /// Skin id: magpie-ink, paper-library or neon-shelf. Wins over --theme.
+        /// Skin id: magpie-ink, paper-library, neon-shelf, forest-stacks, sepia-desk or midnight-archive. Wins over --theme.
         #[arg(long)]
         skin: Option<String>,
         #[arg(long)]

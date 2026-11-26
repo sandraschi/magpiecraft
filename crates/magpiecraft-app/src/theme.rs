@@ -8,6 +8,22 @@
 use crate::skins::{BackdropStyle, CardDecorStyle, SkinPalette};
 use egui::{Color32, CornerRadius, FontId, Shadow, Stroke, TextStyle};
 
+/// User-tuned decor on top of a skin. Stored in Settings, so it survives a
+/// restart and a skin switch; the skin stays the curated base.
+#[derive(Debug, Clone, Copy)]
+pub struct DecorOpts {
+    /// Card border width in points, 1.0 to 3.0.
+    pub border_width: f32,
+    /// Backdrop pattern strength, 0.0 (solid) to 2.0 (double).
+    pub backdrop_amount: f32,
+}
+
+impl DecorOpts {
+    pub fn amount(self) -> f32 {
+        self.backdrop_amount
+    }
+}
+
 /// Full-window visuals for one palette.
 pub fn visuals(palette: &SkinPalette) -> egui::Visuals {
     let mut v = if palette.is_light {
@@ -78,10 +94,12 @@ pub fn apply_text_styles(ctx: &egui::Context) {
 }
 
 /// A card: filled, decor-styled shadow, accent stripe on the left when requested.
+/// The border width comes from the user's decor options, not the skin.
 pub fn card(
     ui: &mut egui::Ui,
     palette: &SkinPalette,
     accent: Option<Color32>,
+    decor: &DecorOpts,
     add: impl FnOnce(&mut egui::Ui),
 ) {
     let corner = CornerRadius::same(8);
@@ -111,7 +129,7 @@ pub fn card(
     };
     egui::Frame::NONE
         .fill(palette.card)
-        .stroke(Stroke::new(1.0, palette.border))
+        .stroke(Stroke::new(decor.border_width, palette.border))
         .corner_radius(corner)
         .shadow(shadow)
         .inner_margin(egui::Margin::same(10))
@@ -131,14 +149,18 @@ pub fn card(
 /// Paint the skin backdrop over one rect. The caller passes the page area, never
 /// the whole window: the menu bar and search row are painted before this runs and
 /// must not be covered.
-pub fn paint_backdrop(ui: &egui::Ui, palette: &SkinPalette, rect: egui::Rect) {
+pub fn paint_backdrop(ui: &egui::Ui, palette: &SkinPalette, rect: egui::Rect, decor: &DecorOpts) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, palette.canvas);
+    let amount = decor.amount();
+    if amount <= 0.01 {
+        return;
+    }
     match palette.backdrop {
         BackdropStyle::Solid => {}
         BackdropStyle::Weave => {
             // Faint diagonal weave, like book cloth.
-            let color = pattern_line(palette);
+            let color = pattern_line(palette, amount);
             let step = 26.0;
             let mut x = rect.left() - rect.height();
             while x < rect.right() {
@@ -154,7 +176,7 @@ pub fn paint_backdrop(ui: &egui::Ui, palette: &SkinPalette, rect: egui::Rect) {
         }
         BackdropStyle::Dots => {
             // Sparse dots, like dust in a projector beam.
-            let color = pattern_line(palette);
+            let color = pattern_line(palette, amount);
             let step = 34.0;
             let mut y = rect.top() + 12.0;
             let mut row = 0;
@@ -171,14 +193,17 @@ pub fn paint_backdrop(ui: &egui::Ui, palette: &SkinPalette, rect: egui::Rect) {
     }
 }
 
-fn pattern_line(palette: &SkinPalette) -> Color32 {
+fn pattern_line(palette: &SkinPalette, amount: f32) -> Color32 {
     // Barely-there lines: visible on close look, invisible at a glance.
+    // The user's backdrop slider scales the alpha; 0 paints solid.
     let (r, g, b) = if palette.is_light {
         (120, 110, 95)
     } else {
         (150, 160, 190)
     };
-    Color32::from_rgba_unmultiplied(r, g, b, if palette.is_light { 16 } else { 20 })
+    let base = if palette.is_light { 16 } else { 20 };
+    let alpha = ((base as f32 * amount).round() as i32).clamp(0, 255) as u8;
+    Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 
 /// Dimmed secondary text colour for the current theme.

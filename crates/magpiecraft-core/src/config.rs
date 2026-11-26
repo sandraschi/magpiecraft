@@ -94,7 +94,7 @@ impl Paths {
     }
 }
 
-/// The look of the app. One id, three curated skins; the palettes themselves live
+/// The look of the app. One id, six curated skins; the palettes themselves live
 /// in the app crate, but the id and its lightness live here so settings, the CLI
 /// and MCP all agree on what names are legal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,16 +102,29 @@ pub enum SkinId {
     MagpieInk,
     PaperLibrary,
     NeonShelf,
+    ForestStacks,
+    SepiaDesk,
+    MidnightArchive,
 }
 
 impl SkinId {
-    pub const ALL: [Self; 3] = [Self::MagpieInk, Self::PaperLibrary, Self::NeonShelf];
+    pub const ALL: [Self; 6] = [
+        Self::MagpieInk,
+        Self::PaperLibrary,
+        Self::NeonShelf,
+        Self::ForestStacks,
+        Self::SepiaDesk,
+        Self::MidnightArchive,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
             SkinId::MagpieInk => "magpie-ink",
             SkinId::PaperLibrary => "paper-library",
             SkinId::NeonShelf => "neon-shelf",
+            SkinId::ForestStacks => "forest-stacks",
+            SkinId::SepiaDesk => "sepia-desk",
+            SkinId::MidnightArchive => "midnight-archive",
         }
     }
 
@@ -120,12 +133,15 @@ impl SkinId {
             "magpie-ink" | "ink" | "dark" => Some(SkinId::MagpieInk),
             "paper-library" | "paper" | "light" => Some(SkinId::PaperLibrary),
             "neon-shelf" | "neon" => Some(SkinId::NeonShelf),
+            "forest-stacks" | "forest" => Some(SkinId::ForestStacks),
+            "sepia-desk" | "sepia" => Some(SkinId::SepiaDesk),
+            "midnight-archive" | "midnight" | "archive" => Some(SkinId::MidnightArchive),
             _ => None,
         }
     }
 
     pub fn is_light(self) -> bool {
-        matches!(self, SkinId::PaperLibrary)
+        matches!(self, SkinId::PaperLibrary | SkinId::SepiaDesk)
     }
 
     pub fn fallback() -> Self {
@@ -164,6 +180,10 @@ pub struct Settings {
     pub render_cache_mb: u64,
     /// Folders that hold backups, checked by ackup_status.
     pub backup_roots: Vec<String>,
+    /// Card border width in points, 1.0 to 3.0. Tuned in Settings, Appearance.
+    pub border_width: f32,
+    /// Backdrop pattern strength, 0.0 (solid) to 2.0 (double). Tuned in Settings.
+    pub backdrop_amount: f32,
 }
 
 impl Default for Settings {
@@ -183,6 +203,8 @@ impl Default for Settings {
             extract_cache_mb: 8192,
             render_cache_mb: 2048,
             backup_roots: Vec::new(),
+            border_width: 1.0,
+            backdrop_amount: 1.0,
         }
     }
 }
@@ -200,6 +222,8 @@ impl Settings {
         self.pdf_dpi = self.pdf_dpi.clamp(96, 400);
         self.extract_cache_mb = self.extract_cache_mb.clamp(256, 200_000);
         self.render_cache_mb = self.render_cache_mb.clamp(64, 50_000);
+        self.border_width = self.border_width.clamp(1.0, 3.0);
+        self.backdrop_amount = self.backdrop_amount.clamp(0.0, 2.0);
         if SkinId::parse(&self.skin).is_none() {
             self.skin = SkinId::fallback().id().to_string();
         }

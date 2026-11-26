@@ -323,3 +323,13 @@ None. Two known limits are deliberate and documented rather than blockers:
   standard content sections plus Skills (honest: none bundled yet, MCP surface
   named instead) and Project files. HELP.md rewritten to match. Stale Tier-2
   "not there yet" card is gone.
+
+## 2026-11-26: standard shell, slice 3 - skins djcraft-style
+
+- Six skins now: Forest Stacks (deep green dark), Sepia Desk (aged paper light)
+  and Midnight Archive (deep blue dark) join the three. All six pass the locked
+  contrast tests (7:1 primary, 4.5:1 secondary, distinct kind accents).
+- Appearance tuning in Settings: zoom slider (75-150%), card border width
+  (1.0-3.0pt) and backdrop pattern strength (0-200%, 0 paints solid). New
+  Settings fields with defaults and clamps, so old settings files keep loading.
+- Command palette and --skin help text list all six; core and app SkinId agree.
