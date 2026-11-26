@@ -1201,6 +1201,152 @@ pub fn chat(
     }
 }
 
+impl From<LlmError> for crate::MagpieError {
+    fn from(e: LlmError) -> Self {
+        crate::MagpieError::llm(e.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ollama VRAM management and live test
+// ---------------------------------------------------------------------------
+
+fn ollama_post(endpoint: &str, payload: &serde_json::Value) -> Result<(), LlmError> {
+    let out = std::process::Command::new("curl.exe")
+        .args([
+            "-sS",
+            "-X",
+            "POST",
+            &format!("{endpoint}/api/generate"),
+            "-H",
+            "Content-Type: application/json",
+            "--data-binary",
+            &format!("@{}", stash_payload(payload)?),
+            "--connect-timeout",
+            "2",
+            "--max-time",
+            "120",
+        ])
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                LlmError::CurlMissing
+            } else {
+                LlmError::Unreachable {
+                    detail: e.to_string(),
+                }
+            }
+        })?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(LlmError::Unreachable {
+            detail: truncate_middle(String::from_utf8_lossy(&out.stderr).trim(), 200),
+        })
+    }
+}
+
+fn stash_payload(payload: &serde_json::Value) -> Result<String, LlmError> {
+    let dir = std::env::temp_dir().join(format!("magpiecraft-llm-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| LlmError::Unreachable {
+        detail: format!("cannot stage request: {e}"),
+    })?;
+    let file = dir.join("gen.json");
+    std::fs::write(
+        &file,
+        serde_json::to_string(payload).map_err(|e| LlmError::BadReply {
+            detail: format!("cannot serialise request: {e}"),
+        })?,
+    )
+    .map_err(|e| LlmError::Unreachable {
+        detail: format!("cannot stage request: {e}"),
+    })?;
+    Ok(file.display().to_string())
+}
+
+/// Evict every resident Ollama model except `keep` (empty keeps none),
+/// then warm `keep` with a one-token generate. Saving a selection switches
+/// VRAM, never just config.
+pub fn switch_ollama_model(config: &LlmConfig, keep: &str) -> Result<serde_json::Value, LlmError> {
+    let endpoint = if config.ollama_endpoint.trim().is_empty() {
+        LlmProvider::Ollama.default_endpoint().to_string()
+    } else {
+        config.ollama_endpoint.trim().to_string()
+    };
+    let residents = curl_get(&format!("{endpoint}/api/ps"), 2, 10)
+        .ok()
+        .and_then(|(c, b)| {
+            if c == 200 {
+                serde_json::from_str::<serde_json::Value>(&b).ok()
+            } else {
+                None
+            }
+        })
+        .and_then(|v| v.get("models")?.as_array().cloned())
+        .unwrap_or_default();
+    let mut evicted = Vec::new();
+    for m in &residents {
+        if let Some(name) = m.get("name").and_then(|n| n.as_str()) {
+            if name != keep {
+                ollama_post(
+                    &endpoint,
+                    &serde_json::json!({"model": name, "keep_alive": 0}),
+                )?;
+                evicted.push(name.to_string());
+            }
+        }
+    }
+    let warmed = if keep.is_empty() {
+        false
+    } else {
+        ollama_post(
+            &endpoint,
+            &serde_json::json!({
+                "model": keep,
+                "prompt": "ok",
+                "stream": false,
+                "think": false,
+                "keep_alive": "30m",
+                "options": {"num_predict": 1},
+            }),
+        )
+        .is_ok()
+    };
+    Ok(serde_json::json!({"evicted": evicted, "warmed": keep, "warm_ok": warmed}))
+}
+
+/// Live validation: one short completion through the selected provider.
+/// `ok` is true only on a live reply; curated names without a key are an error.
+pub fn test_completion(
+    config: &LlmConfig,
+    prompt: Option<&str>,
+) -> Result<serde_json::Value, LlmError> {
+    let started = std::time::Instant::now();
+    let outcome = chat(
+        config,
+        &ChatRequest {
+            messages: vec![ChatMessage::user(
+                prompt.unwrap_or("Reply with exactly: OK"),
+            )],
+            tools: vec![],
+            max_tokens: 32,
+            num_ctx: None,
+        },
+        &Cancel::new(),
+    )?;
+    let reply = match outcome.reply {
+        ChatReply::Text(t) => t,
+        ChatReply::ToolCalls(_) => "(tool calls)".to_string(),
+    };
+    Ok(serde_json::json!({
+        "ok": true,
+        "ms": started.elapsed().as_millis() as u64,
+        "reply": truncate_middle(reply.trim(), 500),
+        "prompt_tokens": outcome.prompt_tokens,
+        "completion_tokens": outcome.completion_tokens,
+    }))
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {

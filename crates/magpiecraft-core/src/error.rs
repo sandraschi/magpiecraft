@@ -32,6 +32,8 @@ pub enum MagpieError {
     Config(String),
     #[error("confirmation required: {0}")]
     ConfirmRequired(String),
+    #[error("llm: {0}")]
+    Llm(String),
 }
 
 impl MagpieError {
@@ -49,6 +51,7 @@ impl MagpieError {
             MagpieError::NotImplemented(_) => "not_implemented",
             MagpieError::Config(_) => "config",
             MagpieError::ConfirmRequired(_) => "confirm_required",
+            MagpieError::Llm(_) => "llm",
         }
     }
 
@@ -66,5 +69,9 @@ impl MagpieError {
 
     pub fn not_implemented(msg: impl Into<String>) -> Self {
         MagpieError::NotImplemented(msg.into())
+    }
+
+    pub fn llm(msg: impl Into<String>) -> Self {
+        MagpieError::Llm(msg.into())
     }
 }

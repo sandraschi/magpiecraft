@@ -20,6 +20,30 @@ pub enum Command {
     SkillRead {
         name: Option<String>,
     },
+    /// Redacted LLM config: provider, model, endpoint, key presence. No network.
+    LlmStatus,
+    /// Live model list for one provider (curated names where no list API exists).
+    LlmListModels {
+        provider: Option<String>,
+    },
+    /// Persist the provider and model, switching Ollama VRAM to the pick.
+    LlmSelect {
+        provider: String,
+        model: String,
+    },
+    /// Store one provider key locally. The key is never echoed back.
+    LlmSetKey {
+        provider: String,
+        api_key: String,
+    },
+    /// Evict resident Ollama models, optionally keeping one warm.
+    LlmEvict {
+        keep: Option<String>,
+    },
+    /// One live completion through the selected provider. Ok only on a reply.
+    LlmTest {
+        prompt: Option<String>,
+    },
     Libraries,
     LibraryAdd {
         name: String,
@@ -214,6 +238,12 @@ impl Command {
             Command::Tools => "tools",
             Command::Sources => "sources",
             Command::SkillRead { .. } => "skill.read",
+            Command::LlmStatus => "llm.status",
+            Command::LlmListModels { .. } => "llm.list_models",
+            Command::LlmSelect { .. } => "llm.select",
+            Command::LlmSetKey { .. } => "llm.set_key",
+            Command::LlmEvict { .. } => "llm.evict",
+            Command::LlmTest { .. } => "llm.test",
             Command::Libraries => "libraries",
             Command::LibraryAdd { .. } => "library.add",
             Command::LibraryRemove { .. } => "library.remove",
@@ -293,6 +323,144 @@ fn to_value<T: serde::Serialize>(value: T) -> MagpieResult<Value> {
     serde_json::to_value(value).map_err(|e| MagpieError::invalid(format!("serialize: {e}")))
 }
 
+/// Redacted LLM status: provider, model, endpoint and key presence flags.
+/// No network, so Settings and agents can call it freely. The key values
+/// never leave the config file.
+fn llm_status() -> MagpieResult<Value> {
+    let config = crate::llm::load_config();
+    let provider = config.provider_enum();
+    Ok(json!({
+        "provider": provider.id(),
+        "provider_label": provider.label(),
+        "model": config.model,
+        "endpoint": config.endpoint(),
+        "local": provider.local(),
+        "keys_present": config.keys_present().into_iter().map(|(id, present)| {
+            json!({"provider": id, "present": present})
+        }).collect::<Vec<_>>(),
+        "tools_enabled": config.tools_enabled,
+        "save_transcripts": config.save_transcripts,
+        "config_file": crate::llm::config_path(),
+    }))
+}
+
+/// Live model list for one provider (or the configured one). Anthropic and
+/// Gemini have no list API and return their curated names.
+fn llm_list_models(provider: Option<&str>) -> MagpieResult<Value> {
+    use crate::llm::{
+        probe_ollama, probe_openai_models, LlmProvider, ANTHROPIC_MODELS, GEMINI_MODELS,
+    };
+    let name = provider.unwrap_or("").trim();
+    let selected = if name.is_empty() {
+        crate::llm::load_config().provider_enum()
+    } else {
+        LlmProvider::parse(name)
+            .ok_or_else(|| MagpieError::invalid(format!("unknown provider: {name}")))?
+    };
+    if !selected.has_list_api() {
+        let curated = match selected {
+            LlmProvider::Anthropic => ANTHROPIC_MODELS,
+            _ => GEMINI_MODELS,
+        };
+        return Ok(json!({
+            "provider": selected.id(),
+            "live": false,
+            "models": curated.iter().map(|m| json!({"name": m})).collect::<Vec<_>>(),
+        }));
+    }
+    let full = crate::llm::load_config();
+    let models = match selected {
+        LlmProvider::Ollama => probe_ollama(&full)?,
+        _ => {
+            let endpoint = match selected {
+                LlmProvider::LmStudio => full.lmstudio_endpoint.clone(),
+                _ => full.endpoint(),
+            };
+            probe_openai_models(&endpoint)?
+        }
+    };
+    Ok(json!({
+        "provider": selected.id(),
+        "live": true,
+        "models": models.iter().map(|m| {
+            json!({"name": m.name, "size_gb": m.size_gb, "resident": m.resident})
+        }).collect::<Vec<_>>(),
+    }))
+}
+
+/// Persist the provider and model, switching Ollama VRAM to the pick.
+/// An empty model refuses: there is no fallback model.
+fn llm_select(provider: &str, model: &str) -> MagpieResult<Value> {
+    use crate::llm::{load_config, save_config, switch_ollama_model, LlmProvider};
+    let selected = LlmProvider::parse(provider)
+        .ok_or_else(|| MagpieError::invalid(format!("unknown provider: {provider}")))?;
+    if model.trim().is_empty() {
+        return Err(MagpieError::invalid(
+            "model is empty: discovery lists installed models",
+        ));
+    }
+    let mut config = load_config();
+    config.provider = selected.id().to_string();
+    config.model = model.trim().to_string();
+    save_config(&config).map_err(MagpieError::llm)?;
+    let vram = if selected == LlmProvider::Ollama {
+        switch_ollama_model(&config, config.model.trim()).map_err(crate::MagpieError::from)?
+    } else {
+        json!({"evicted": [], "warmed": model.trim(), "warm_ok": true})
+    };
+    Ok(json!({
+        "provider": selected.id(),
+        "model": config.model,
+        "vram": vram,
+    }))
+}
+
+/// Store one provider key locally. The reply carries presence, never the key.
+fn llm_set_key(provider: &str, api_key: &str) -> MagpieResult<Value> {
+    use crate::llm::{load_config, save_config, LlmProvider};
+    let selected = LlmProvider::parse(provider)
+        .ok_or_else(|| MagpieError::invalid(format!("unknown provider: {provider}")))?;
+    if selected.local() {
+        return Err(MagpieError::invalid(format!(
+            "{} is local and takes no key",
+            selected.id()
+        )));
+    }
+    let mut config = load_config();
+    let slot = match selected {
+        LlmProvider::OpenAi => &mut config.openai_key,
+        LlmProvider::Anthropic => &mut config.anthropic_key,
+        LlmProvider::DeepSeek => &mut config.deepseek_key,
+        LlmProvider::Meta => &mut config.meta_key,
+        LlmProvider::OpenRouter => &mut config.openrouter_key,
+        LlmProvider::Custom => &mut config.custom_key,
+        LlmProvider::Gemini => &mut config.gemini_key,
+        _ => return Err(MagpieError::invalid("no key slot for a local provider")),
+    };
+    if !api_key.trim().is_empty() {
+        *slot = api_key.trim().to_string();
+    }
+    save_config(&config).map_err(MagpieError::llm)?;
+    Ok(json!({
+        "provider": selected.id(),
+        "key_present": !config.resolve_key(selected).is_empty(),
+    }))
+}
+
+/// Evict resident Ollama models, optionally keeping one.
+fn llm_evict(keep: Option<&str>) -> MagpieResult<Value> {
+    use crate::llm::{load_config, switch_ollama_model};
+    let config = load_config();
+    switch_ollama_model(&config, keep.unwrap_or("").trim()).map_err(crate::MagpieError::from)
+}
+
+/// One live completion through the selected provider. Ok only on a reply.
+fn llm_test(prompt: Option<&str>) -> MagpieResult<Value> {
+    use crate::llm::{load_config, test_completion};
+    let config = load_config();
+    test_completion(&config, prompt).map_err(crate::MagpieError::from)
+}
+
 fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
     match cmd {
         Command::Status => catalog.status(),
@@ -341,6 +509,12 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
         } => catalog.series_set_rtl(&library, &series, rtl),
         Command::Inspect { path } => catalog.inspect(&path),
         Command::SkillRead { name } => crate::skills::read(name.as_deref()),
+        Command::LlmStatus => llm_status(),
+        Command::LlmListModels { provider } => llm_list_models(provider.as_deref()),
+        Command::LlmSelect { provider, model } => llm_select(&provider, &model),
+        Command::LlmSetKey { provider, api_key } => llm_set_key(&provider, &api_key),
+        Command::LlmEvict { keep } => llm_evict(keep.as_deref()),
+        Command::LlmTest { prompt } => llm_test(prompt.as_deref()),
         Command::Settings => to_value(catalog.settings().clone()),
         Command::SettingsSet {
             mature_visible,
@@ -533,5 +707,67 @@ mod tests {
             "lib:2|a/b.cbz"
         );
         assert!(key_with_library("a/b.cbz", None).is_err());
+    }
+
+    #[test]
+    fn llm_failure_paths_refuse_before_writing() {
+        let mut c = catalog();
+        // Unknown provider: refused, nothing persisted.
+        let bad = dispatch(
+            &mut c,
+            Command::LlmSelect {
+                provider: "nope".to_string(),
+                model: "x".to_string(),
+            },
+        );
+        assert_eq!(bad["ok"], json!(false));
+        assert_eq!(bad["error_type"], json!("invalid"));
+        // Local providers take no key.
+        let local = dispatch(
+            &mut c,
+            Command::LlmSetKey {
+                provider: "ollama".to_string(),
+                api_key: "k".to_string(),
+            },
+        );
+        assert_eq!(local["ok"], json!(false));
+        // Empty model: refused, so there is never a fallback model.
+        let empty = dispatch(
+            &mut c,
+            Command::LlmSelect {
+                provider: "ollama".to_string(),
+                model: "  ".to_string(),
+            },
+        );
+        assert_eq!(empty["ok"], json!(false));
+    }
+
+    #[test]
+    fn llm_status_is_redacted_and_lists_skills() {
+        let mut c = catalog();
+        let status = dispatch(&mut c, Command::LlmStatus);
+        assert_eq!(status["ok"], json!(true));
+        let text = status.to_string();
+        assert!(!text.contains("sk-"), "no key material in status");
+        assert!(status["keys_present"].is_array());
+        let list = dispatch(&mut c, Command::SkillRead { name: None });
+        assert_eq!(list["ok"], json!(true));
+        let names: Vec<&str> = list["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|s| s.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(names.contains(&"magpiecraft-video"));
+        assert!(names.contains(&"magpiecraft-verify"));
+        // Unknown skill is an invalid error, never an empty success.
+        let missing = dispatch(
+            &mut c,
+            Command::SkillRead {
+                name: Some("nope".to_string()),
+            },
+        );
+        assert_eq!(missing["ok"], json!(false));
+        assert_eq!(missing["error_type"], json!("invalid"));
     }
 }

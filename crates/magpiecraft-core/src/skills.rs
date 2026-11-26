@@ -60,6 +60,12 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "media_health",
     "media_curate",
     "magpie_skill_read",
+    "magpie_llm_status",
+    "magpie_llm_list_models",
+    "magpie_llm_select",
+    "magpie_llm_set_key",
+    "magpie_llm_evict",
+    "magpie_llm_test",
 ];
 
 /// Read one frontmatter field from a SKILL.md body. Returns "" when absent;
