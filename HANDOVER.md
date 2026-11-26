@@ -295,3 +295,13 @@ None. Two known limits are deliberate and documented rather than blockers:
   `/` and Ctrl+F. Escape closes a dialog only when not typing. Enter submits the
   Add-library form.
 - Gates: `cargo fmt --check`, clippy `-D warnings`, 184 workspace tests, all green.
+
+## 2026-11-26 follow-up: the stair was a stale staged binary
+
+- The grid fix above was correct (screenshot pixels: both card bodies start at the
+  same y), but double-clicking `start.bat` still showed the stair. Root cause:
+  `start.ps1` only rebuilt when the exes were missing, and session builds go to
+  `D:\Dev\cargo-target`, so `target\release\magpiecraft.exe` was the 11/25 binary.
+- `start.ps1` now rebuilds when any `crates/**/*.rs` or `Cargo.toml` is newer than
+  the staged exe. Staged exe refreshed by hand this time; verified end to end with
+  `start.ps1 -Smoke` (0.9.0, 17 libraries, ok).

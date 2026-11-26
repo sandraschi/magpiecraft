@@ -30,7 +30,20 @@ if ($DataHome) { $env:MAGPIECRAFT_HOME = $DataHome }
 
 $appExe = Join-Path $root 'target\release\magpiecraft.exe'
 $cliExe = Join-Path $root 'target\release\magpiecraft-mcp.exe'
-if (-not (Test-Path $appExe) -or -not (Test-Path $cliExe)) {
+# Rebuild when the binaries are missing or older than the sources, so a
+# double-click never launches a stale build after an update.
+$needBuild = (-not (Test-Path $appExe) -or -not (Test-Path $cliExe))
+if (-not $needBuild) {
+    $exeTime = (Get-Item $appExe).LastWriteTime
+    $newer = Get-ChildItem -Path (Join-Path $root 'crates') -Recurse -Include '*.rs','Cargo.toml' |
+        Where-Object { $_.LastWriteTime -gt $exeTime } |
+        Select-Object -First 1
+    if ($newer) {
+        Write-Host ("Sources changed since last build ({0}), rebuilding..." -f $newer.FullName) -ForegroundColor Cyan
+        $needBuild = $true
+    }
+}
+if ($needBuild) {
     Write-Host 'Building MagpieCraft (first run takes a few minutes)...' -ForegroundColor Cyan
     cargo build --release --workspace
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
