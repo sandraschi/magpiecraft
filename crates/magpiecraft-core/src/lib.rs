@@ -11,6 +11,7 @@ pub mod config;
 pub mod cover;
 pub mod error;
 pub mod images;
+pub mod llm;
 pub mod model;
 pub mod neardupe;
 pub mod organise;
