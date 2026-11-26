@@ -653,13 +653,25 @@ pub fn print(command: &str, value: &Value) {
                 }
             }
         }
-        "subs.shift" | "subs.convert" | "subs.extract" => {
-            println!("{} -> {}", s(value, "source"), s(value, "out"));
+        "subs.shift" | "subs.convert" | "subs.extract" | "subs.generate" => {
+            let from = if s(value, "source").is_empty() {
+                s(value, "from")
+            } else {
+                s(value, "source")
+            };
+            println!("{from} -> {}", s(value, "out"));
             if value.get("cues").is_some() {
                 println!("  {} cue(s)", n(value, "cues"));
             }
             if n(value, "dropped") > 0 {
                 println!("  {} cue(s) dropped before the start", n(value, "dropped"));
+            }
+            if !s(value, "engine").is_empty() {
+                println!(
+                    "  engine {} model {}",
+                    s(value, "engine"),
+                    s(value, "model")
+                );
             }
         }
         "hash" => println!("{}  {}", s(value, "hash"), s(value, "key")),

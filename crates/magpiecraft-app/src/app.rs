@@ -2024,7 +2024,7 @@ impl MagpieApp {
                 "Organise: film and TV naming presets, rename plans with diff, journal and undo, quarantine instead of delete, review queue.",
                 "Verify: BLAKE3 manifests, duplicate and near-duplicate grouping, verification schedule, backup status and verified copies.",
                 "Drives: physical disks behind the libraries with health warnings (Stats page).",
-                "Subtitles: list, shift, convert and extract sidecar files next to your films.",
+                "Subtitles: list, shift, convert, extract and locally generate (whisperx/whisper) sidecar files next to your films.",
                 "Convert plans: FFmpeg presets turned into reviewable plans, applied through the same journal as renames.",
             ],
         );

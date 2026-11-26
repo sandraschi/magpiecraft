@@ -103,15 +103,18 @@ pub fn tools() -> Value {
              convert_plan: a plan for one video or track with a preset; apply it with media_curate, undo deletes \
              the output. subs: sidecar subtitles and embedded tracks for one item. subs_shift: move every cue by \
              seconds. subs_convert: SRT to WebVTT or back. subs_extract: pull an embedded track out with ffmpeg. \
+             subs_generate: transcribe speech to SRT with whisperx/whisper on this machine (minutes, not seconds). \
              Nothing here edits a source file.",
             json!({
-                "operation": ops(&["presets", "convert_plan", "subs", "subs_shift", "subs_convert", "subs_extract"]),
+                "operation": ops(&["presets", "convert_plan", "subs", "subs_shift", "subs_convert", "subs_extract", "subs_generate"]),
                 "key": key,
                 "preset": { "type": "string", "description": "convert_plan: remux-mkv, mp4-compat, loudnorm or strip-metadata" },
                 "out": { "type": "string", "description": "output file; defaults to a suffixed name beside the source" },
                 "path": { "type": "string", "description": "subs_shift/subs_convert: the subtitle file to read" },
                 "by": { "type": "number", "description": "subs_shift: seconds to move the cues, negative to advance" },
                 "to": { "type": "string", "description": "subs_convert: srt or vtt" },
+                "model": { "type": "string", "description": "subs_generate: whisper model name, default is the tool default" },
+                "lang": { "type": "string", "description": "subs_generate: language code, for example en" },
                 "stream": { "type": "integer", "description": "subs_extract: subtitle stream index, 0 is the first" }
             }),
             &["operation"]
@@ -442,6 +445,12 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
                 subtitle_index: opt_usize(args, "stream").unwrap_or(0) as u32,
                 out: req_str(args, "out")?,
             },
+            "subs_generate" | "subs.generate" => Command::SubsGenerate {
+                key: req_str(args, "key")?,
+                model: opt_str(args, "model"),
+                lang: opt_str(args, "lang"),
+                out: opt_str(args, "out"),
+            },
             other => return Err(format!("unknown media_transform operation: {other}")),
         },
         "media_curate" => match op.as_str() {
@@ -594,6 +603,13 @@ mod tests {
         assert!(to_command("media_transform", &json!({"operation":"nope"})).is_err());
         assert!(to_command("media_catalog", &json!({"operation":"download_everything"})).is_err());
         assert!(to_command("media_catalog", &json!({})).is_err());
+        let generate = to_command(
+            "media_transform",
+            &json!({"operation":"subs_generate","key":"lib:1|a.mkv","lang":"en"}),
+        )
+        .unwrap();
+        assert_eq!(generate.id(), "subs.generate");
+        assert!(to_command("media_transform", &json!({"operation":"subs_generate"})).is_err());
     }
 
     #[test]

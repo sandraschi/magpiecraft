@@ -27,7 +27,7 @@ No telemetry, no cloud account. This file mirrors the in-app Help Center.
   undo, quarantine instead of delete, review queue.
 - Verify: BLAKE3 manifests, duplicate and near-duplicate grouping,
   verification schedule, backup status and verified copies.
-- Subtitles: list, shift, convert and extract sidecar files next to your films.
+- Subtitles: list, shift, convert and extract sidecar files next to your films, plus local generation with whisperx/whisper on your own machine.
 - Convert plans: FFmpeg presets turned into reviewable plans, applied through
   the same journal as renames.
 - Drives: physical disks behind the libraries with health warnings.

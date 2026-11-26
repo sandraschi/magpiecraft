@@ -27,6 +27,9 @@ sidecar files:
 - `subs_convert`: SRT to WebVTT or back (`to: srt` or `vtt`).
 - `subs_extract`: pull an embedded track out with ffmpeg (`stream` index,
   0 is the first).
+- `subs_generate`: transcribe speech to SRT on this machine with whisperx or
+  whisper (`model`, `lang`); takes minutes, needs the binary on PATH, never
+  any cloud service.
 
 ## Conversion
 

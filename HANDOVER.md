@@ -393,6 +393,17 @@ None. Two known limits are deliberate and documented rather than blockers:
 - Staged exe refresh skipped: Sandra is running the app right now (PID from
   19:08); start.ps1 rebuilds on her next launch.
 
+## 2026-11-26: Tier 3 local subtitle generation (whisperx/whisper)
+
+- tools: whisperx-first detection (MAGPIECRAFT_WHISPER override), transcribe()
+  writing <stem>.srt and renaming to the requested out; refusal to overwrite;
+  status report + missing entries.
+- Core Command::SubsGenerate (key, model?, lang?, out?) defaulting to
+  <stem>.<lang>.srt beside the source; MCP op, CLI verb, human output.
+- No model downloads, no cloud: missing binary is not_configured, never silent.
+  whisperx.exe and whisper.exe both present on Goliath; live run left for real
+  media (minutes per file).
+
 ## 2026-11-26: standard shell, slice 4d part 2 - chat dock
 
 - Right dock (360px bounded, wrap, Send right of input), Ctrl+J, Window menu,

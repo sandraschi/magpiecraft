@@ -251,6 +251,19 @@ enum Cmd {
         #[arg(long)]
         out: String,
     },
+    /// Generate an SRT sidecar with whisperx/whisper on this machine (minutes, not seconds).
+    SubsGenerate {
+        key: String,
+        /// Whisper model name, for example large-v3. Default is the tool default.
+        #[arg(long)]
+        model: Option<String>,
+        /// Language code, for example en. Default is auto-detect.
+        #[arg(long)]
+        lang: Option<String>,
+        /// Output path. Default is <stem>.<lang>.srt beside the source.
+        #[arg(long)]
+        out: Option<String>,
+    },
     /// Where each library stands against the configured backup roots.
     Backup,
     /// Physical disks behind the libraries, with health warnings.
@@ -667,6 +680,20 @@ fn build(cmd: &Cmd, json_mode: bool) -> Result<(&'static str, Command), String> 
             let c = Command::SubsExtract {
                 key: key.clone(),
                 subtitle_index: *stream,
+                out: out.clone(),
+            };
+            (c.id(), c)
+        }
+        Cmd::SubsGenerate {
+            key,
+            model,
+            lang,
+            out,
+        } => {
+            let c = Command::SubsGenerate {
+                key: key.clone(),
+                model: model.clone(),
+                lang: lang.clone(),
                 out: out.clone(),
             };
             (c.id(), c)
