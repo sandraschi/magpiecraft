@@ -345,6 +345,54 @@ pub fn print(command: &str, value: &Value) {
                     .join(", "))
                 .unwrap_or_default()
         ),
+        "drive.health" => {
+            if let Some(drives) = value.get("drives").and_then(Value::as_array) {
+                for d in drives {
+                    let counters = if d.get("counters_known").and_then(Value::as_bool) == Some(true)
+                    {
+                        format!(
+                            " wear {}% temp {}C hours {}",
+                            d.get("wear_percent")
+                                .and_then(Value::as_u64)
+                                .map(|w| w.to_string())
+                                .unwrap_or("?".to_string()),
+                            d.get("temp_c")
+                                .and_then(Value::as_i64)
+                                .map(|t| t.to_string())
+                                .unwrap_or("?".to_string()),
+                            d.get("power_on_hours")
+                                .and_then(Value::as_u64)
+                                .map(|h| h.to_string())
+                                .unwrap_or("?".to_string())
+                        )
+                    } else {
+                        " counters unknown".to_string()
+                    };
+                    println!(
+                        "{:<22} {:<9} {}{}",
+                        s(d, "name"),
+                        s(d, "health"),
+                        counters,
+                        if s(d, "health") == "Healthy" {
+                            ""
+                        } else {
+                            " !"
+                        }
+                    );
+                }
+            }
+            if let Some(warnings) = value.get("warnings").and_then(Value::as_array) {
+                if warnings.is_empty() {
+                    println!("no warnings");
+                }
+                for w in warnings {
+                    if let Some(text) = w.as_str() {
+                        println!("! {text}");
+                    }
+                }
+            }
+            println!("  source: {}", s(value, "source"));
+        }
         "verify.status" => {
             println!(
                 "{} of {} libraries are due a re-check (every {} days)",

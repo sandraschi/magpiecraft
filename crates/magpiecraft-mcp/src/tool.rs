@@ -121,10 +121,11 @@ pub fn tools() -> Value {
             "Integrity. duplicates: exact duplicates by size then BLAKE3. hash: BLAKE3 of one item. manifest_write \
              and manifest_verify: checksum manifests for bitrot detection. verify_status: which libraries are \
              due for a re-check and what the last run found. verify_run: write the baseline on the first run, \
-             compare afterwards, and record every run. inspect: ffprobe technical details for one file. Files \
+             compare afterwards, and record every run. inspect: ffprobe technical details for one file. \
+             drive_health: physical disks behind the libraries with warnings. Files \
              are only ever read.",
             json!({
-                "operation": ops(&["duplicates", "hash", "manifest_write", "manifest_verify", "inspect", "verify_status", "verify_run", "backup_status", "backup_plan", "near_duplicates"]),
+                "operation": ops(&["duplicates", "hash", "manifest_write", "manifest_verify", "inspect", "verify_status", "verify_run", "backup_status", "backup_plan", "near_duplicates", "drive_health"]),
                 "library": library,
                 "limit": { "type": "integer", "description": "duplicates: group cap (default 200)" },
                 "key": key,
@@ -408,6 +409,7 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
             "near_duplicates" | "near.duplicates" | "near_dupes" => Command::NearDuplicates {
                 limit: opt_usize(args, "limit").unwrap_or(200),
             },
+            "drive_health" | "drive.health" => Command::DriveHealth,
             "verify_run" | "verify.run" => Command::VerifyRun {
                 library: opt_str(args, "library"),
                 every_days: opt_i32(args, "every_days").map(i64::from).unwrap_or(30),

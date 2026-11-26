@@ -114,6 +114,7 @@ enum Act {
     ChatSend,
     ChatClear,
     ChatPrompt,
+    CheckDrives,
     PlanRename,
     ApplyPlan(String),
     UndoJournal(String),
@@ -164,6 +165,10 @@ pub struct MagpieApp {
     llm_key_input: String,
     /// Chat dock state. The worker owns its catalogue handle.
     chat: ChatDock,
+    /// Last drive health report (live probe, never cached in the catalogue).
+    drive_report: Option<Value>,
+    drive_busy: bool,
+    drive_rx: Option<Receiver<Value>>,
 }
 
 /// The Organise page: what is uncertain, what is planned, what was applied.
@@ -250,6 +255,9 @@ impl MagpieApp {
             llm_test_out: None,
             llm_key_input: String::new(),
             chat: ChatDock::new(),
+            drive_report: None,
+            drive_busy: false,
+            drive_rx: None,
             catalog,
         };
         app.refresh();
@@ -513,6 +521,54 @@ impl MagpieApp {
         self.chat.send(&config, 10, status, selection, paths);
     }
 
+    /// Probe the physical disks on a worker thread. A sick drive must never
+    /// freeze the window.
+    fn start_drive_check(&mut self) {
+        if self.drive_busy {
+            return;
+        }
+        let paths = self.catalog.paths().clone();
+        let (tx, rx) = channel::<Value>();
+        self.drive_rx = Some(rx);
+        self.drive_busy = true;
+        std::thread::Builder::new()
+            .name("magpie-drives".to_string())
+            .spawn(move || {
+                let report = match Catalog::open(paths) {
+                    Ok(mut catalog) => {
+                        use magpiecraft_core::command::{dispatch, Command};
+                        dispatch(&mut catalog, Command::DriveHealth)
+                    }
+                    Err(e) => json!({"ok": false, "error": e.to_string()}),
+                };
+                let _ = tx.send(report);
+            })
+            .ok();
+    }
+
+    /// Poll the drive worker. Call every frame; repaints while busy.
+    fn poll_drives(&mut self, ctx: &egui::Context) {
+        let mut busy = false;
+        if let Some(rx) = &self.drive_rx {
+            match rx.try_recv() {
+                Ok(report) => {
+                    self.drive_report = Some(report);
+                    self.drive_busy = false;
+                    self.drive_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => busy = true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.status = "drive check stopped unexpectedly".to_string();
+                    self.drive_busy = false;
+                    self.drive_rx = None;
+                }
+            }
+        }
+        if busy {
+            ctx.request_repaint();
+        }
+    }
+
     /// Removing a library drops its index rows only. The files on disk are
     /// never touched; the engine requires the confirm flag for the same reason.
     fn remove_library(&mut self, name: String) {
@@ -596,6 +652,7 @@ impl MagpieApp {
                 Act::ChatPrompt => {
                     self.chat.show_prompt = !self.chat.show_prompt;
                 }
+                Act::CheckDrives => self.start_drive_check(),
                 Act::Skin(skin) => self.set_skin(skin),
                 Act::ZoomIn => self.set_zoom(ctx, self.zoom * 1.1),
                 Act::ZoomOut => self.set_zoom(ctx, self.zoom / 1.1),
@@ -1715,7 +1772,7 @@ impl MagpieApp {
         });
     }
 
-    fn stats_page(&mut self, ui: &mut egui::Ui) {
+    fn stats_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
         let palette = self.palette();
         let stats = self.stats.clone().unwrap_or_default();
         theme::card(ui, &palette, Some(palette.accent), &self.decor(), |ui| {
@@ -1792,6 +1849,108 @@ impl MagpieApp {
                 ui.label(text);
             }
         });
+        ui.add_space(8.0);
+        self.drives_card(ui, &palette, actions);
+    }
+
+    /// SMART and space report for the disks behind the libraries. The probe
+    /// runs on a worker thread; this card shows the last report.
+    fn drives_card(&mut self, ui: &mut egui::Ui, palette: &SkinPalette, actions: &mut Vec<Act>) {
+        theme::card(ui, palette, None, &self.decor(), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Drive health").strong());
+                if ui
+                    .small_button(if self.drive_busy {
+                        "Checking..."
+                    } else {
+                        "Check drives now"
+                    })
+                    .clicked()
+                {
+                    actions.push(Act::CheckDrives);
+                }
+            });
+            ui.label(
+                egui::RichText::new(
+                    "Windows Storage API; USB enclosures report no counters, shown as unknown. \
+                     smartctl is used when present.",
+                )
+                .size(12.0)
+                .color(theme::dim_text(ui)),
+            );
+            let Some(report) = self.drive_report.clone() else {
+                if !self.drive_busy {
+                    ui.label("No check yet. The probe takes a few seconds.");
+                }
+                return;
+            };
+            if report.get("ok").and_then(Value::as_bool) == Some(false) {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "drive check failed: {}",
+                        report
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown")
+                    ))
+                    .color(palette.accent),
+                );
+                return;
+            }
+            if let Some(drives) = report.get("drives").and_then(Value::as_array) {
+                for d in drives {
+                    let name = d.get("name").and_then(Value::as_str).unwrap_or("?");
+                    let health = d.get("health").and_then(Value::as_str).unwrap_or("?");
+                    let detail = if d.get("counters_known").and_then(Value::as_bool) == Some(true) {
+                        format!(
+                            " wear {}% temp {}C hours {}",
+                            d.get("wear_percent")
+                                .and_then(Value::as_u64)
+                                .map(|w| w.to_string())
+                                .unwrap_or("?".to_string()),
+                            d.get("temp_c")
+                                .and_then(Value::as_i64)
+                                .map(|t| t.to_string())
+                                .unwrap_or("?".to_string()),
+                            d.get("power_on_hours")
+                                .and_then(Value::as_u64)
+                                .map(|h| h.to_string())
+                                .unwrap_or("?".to_string())
+                        )
+                    } else {
+                        " counters unknown".to_string()
+                    };
+                    let line = format!("{name}: {health}{detail}");
+                    if health.eq_ignore_ascii_case("healthy") {
+                        ui.label(&line);
+                    } else {
+                        ui.label(egui::RichText::new(&line).color(palette.accent));
+                    }
+                }
+            }
+            if let Some(warnings) = report.get("warnings").and_then(Value::as_array) {
+                if warnings.is_empty() {
+                    ui.label("No warnings.");
+                }
+                for w in warnings.iter().filter_map(Value::as_str) {
+                    ui.label(egui::RichText::new(format!("! {w}")).color(palette.accent));
+                }
+            }
+            if let Some(libraries) = report.get("libraries").and_then(Value::as_array) {
+                for lib in libraries {
+                    let name = lib.get("library").and_then(Value::as_str).unwrap_or("?");
+                    let drive = lib
+                        .get("drive")
+                        .and_then(Value::as_str)
+                        .unwrap_or("outside known drives");
+                    ui.label(
+                        egui::RichText::new(format!("{name} -> {drive}"))
+                            .size(12.0)
+                            .color(theme::dim_text(ui)),
+                    );
+                }
+            }
+        });
     }
 
     fn help_page(&mut self, ui: &mut egui::Ui) {
@@ -1864,6 +2023,7 @@ impl MagpieApp {
                 "Playback handoff: films, tracks, books and photos launch in VLC, mpv or the system handler with resume positions. No decoder lives here.",
                 "Organise: film and TV naming presets, rename plans with diff, journal and undo, quarantine instead of delete, review queue.",
                 "Verify: BLAKE3 manifests, duplicate and near-duplicate grouping, verification schedule, backup status and verified copies.",
+                "Drives: physical disks behind the libraries with health warnings (Stats page).",
                 "Subtitles: list, shift, convert and extract sidecar files next to your films.",
                 "Convert plans: FFmpeg presets turned into reviewable plans, applied through the same journal as renames.",
             ],
@@ -2241,6 +2401,7 @@ impl eframe::App for MagpieApp {
         }
         self.poll_scan();
         self.poll_llm(ctx);
+        self.poll_drives(ctx);
         let home = self.catalog.paths().home().to_path_buf();
         for line in self.chat.poll(ctx) {
             if self.llm.save_transcripts {
@@ -2359,7 +2520,7 @@ impl eframe::App for MagpieApp {
                         Page::Stats => {
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
-                                .show(ui, |ui| self.stats_page(ui));
+                                .show(ui, |ui| self.stats_page(ui, &mut actions));
                         }
                         Page::Organise => {
                             egui::ScrollArea::vertical()

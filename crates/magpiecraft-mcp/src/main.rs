@@ -253,6 +253,8 @@ enum Cmd {
     },
     /// Where each library stands against the configured backup roots.
     Backup,
+    /// Physical disks behind the libraries, with health warnings.
+    Drives,
     /// Build a verified backup copy plan (nothing is copied until applied).
     BackupPlan {
         /// Where the backup lives, for example E:\Media
@@ -670,6 +672,7 @@ fn build(cmd: &Cmd, json_mode: bool) -> Result<(&'static str, Command), String> 
             (c.id(), c)
         }
         Cmd::Backup => (Command::BackupStatus.id(), Command::BackupStatus),
+        Cmd::Drives => (Command::DriveHealth.id(), Command::DriveHealth),
         Cmd::BackupPlan {
             to,
             library,
