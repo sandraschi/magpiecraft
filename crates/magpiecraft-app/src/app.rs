@@ -1264,8 +1264,9 @@ impl MagpieApp {
             "MCP server (agents and other apps)",
             &[
                 "magpiecraft mcp speaks MCP over stdio: tools/list, then tools/call.",
-                "Portmanteau tools: media_catalogue, media_search, media_curate, media_verify, media_transform, plus library_add, library_remove, settings, settings_set, sources and tools.",
+                "Portmanteau tools: media_catalog, media_search, media_read, media_transform, media_health, media_curate, plus magpie_skill_read.",
                 "library_remove needs confirm=true and drops index rows only. The files are untouched.",
+                "Skill texts are MCP resources too: resources/list shows every skill:// URI, resources/read returns the body.",
             ],
         );
     }
@@ -1329,15 +1330,21 @@ impl MagpieApp {
     }
 
     fn help_skills(&self, ui: &mut egui::Ui, palette: &SkinPalette) {
-        self.help_card(
-            ui,
-            palette,
-            "Bundled skills",
-            &[
-                "No skills are bundled yet. When they ship, they will live here and double as the chat preprompt: one source for agents, the chat model and you.",
-                "Until then, agents use the MCP surface directly: tools/list for the catalogue, tools/call with media_catalogue, media_search, media_curate, media_verify and media_transform.",
-            ],
+        use magpiecraft_core::skills::SKILLS;
+        let mut lines: Vec<String> = Vec::new();
+        lines.push(format!(
+            "{} skills ship inside the app and double as the chat preprompt: one source for agents, the chat model and you.",
+            SKILLS.len()
+        ));
+        for skill in SKILLS {
+            lines.push(format!("{}: {}", skill.name, skill.description()));
+        }
+        lines.push(
+            "Agents read them over MCP (resources/list, resources/read, magpie_skill_read) or from the command line: magpiecraft skills list, magpiecraft skills show <name>, magpiecraft skills export --to <dir>."
+                .to_string(),
         );
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        self.help_card(ui, palette, "Bundled skills", &refs);
     }
 
     fn help_docs(&self, ui: &mut egui::Ui, palette: &SkinPalette) {

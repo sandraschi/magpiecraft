@@ -44,9 +44,10 @@ Command line (same engine, `--json` for scripts): `magpiecraft status`,
 `manifest-verify`, `verify-status`, `verify-run`, `backup-status`.
 
 MCP server: `magpiecraft mcp` speaks MCP over stdio (`tools/list`, then
-`tools/call`). Portmanteau tools: `media_catalogue`, `media_search`,
-`media_curate`, `media_verify`, `media_transform`, plus `library_add`,
-`library_remove`, `settings`, `settings_set`, `sources` and `tools`.
+`tools/call`). Portmanteau tools: `media_catalog`, `media_search`,
+`media_read`, `media_transform`, `media_health`, `media_curate`, plus
+`magpie_skill_read`. Skill texts are MCP resources too: `resources/list` shows
+every `skill://` URI, `resources/read` returns the body.
 
 ## Tips and tricks
 
@@ -82,6 +83,19 @@ MCP server: `magpiecraft mcp` speaks MCP over stdio (`tools/list`, then
 - Local subtitle generation with a Rust engine, no cloud service.
 - Undecided: an OPDS listener for e-readers. It would be the only network port
   in the product, so it stays undecided until the rest is solid.
+
+## Bundled skills
+
+Ten skill texts ship inside the app and double as the chat preprompt: one
+source for agents, the chat model and you. One per media type and task:
+`magpiecraft-workflow`, `magpiecraft-comics`, `magpiecraft-manga`,
+`magpiecraft-magazines`, `magpiecraft-video`, `magpiecraft-audio`,
+`magpiecraft-ebooks`, `magpiecraft-photos`, `magpiecraft-curate`,
+`magpiecraft-verify`.
+
+Agents read them over MCP (`resources/list`, `resources/read`,
+`magpie_skill_read`) or from the command line: `magpiecraft skills list`,
+`magpiecraft skills show <name>`, `magpiecraft skills export --to <dir>`.
 
 ## Other crafts
 

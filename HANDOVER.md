@@ -333,3 +333,14 @@ None. Two known limits are deliberate and documented rather than blockers:
   (1.0-3.0pt) and backdrop pattern strength (0-200%, 0 paints solid). New
   Settings fields with defaults and clamps, so old settings files keep loading.
 - Command palette and --skin help text list all six; core and app SkinId agree.
+
+## 2026-11-26: standard shell, slice 4a - skills for every media type
+
+- Ten skill texts under skills/ (workflow, comics, manga, magazines, video,
+  audio, ebooks, photos, curate, verify). Each names only real MCP tools.
+- Core skills.rs bundle: include_str!, frontmatter/description check, tool-ref
+  check against KNOWN_TOOLS, 40 KB total cap. `Command::SkillRead` serves list
+  and body through the normal dispatch bus.
+- MCP: resources/list + resources/read (unknown URI is -32002),
+  magpie_skill_read tool, core allowlist cross-test. CLI: skills list, show,
+  export --to --force. Help Skills tab and HELP.md render the real bundle.
