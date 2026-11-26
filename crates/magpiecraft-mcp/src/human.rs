@@ -680,6 +680,53 @@ pub fn print(command: &str, value: &Value) {
                 .unwrap_or(false),
             n(value, "imgdir_min_pages")
         ),
+        "llm.status" => {
+            println!(
+                "{} ({})  model {}  endpoint {}",
+                s(value, "provider"),
+                s(value, "provider_label"),
+                s(value, "model"),
+                s(value, "endpoint")
+            );
+            if let Some(keys) = value.get("keys_present").and_then(Value::as_array) {
+                let set: Vec<&str> = keys
+                    .iter()
+                    .filter(|k| k.get("present").and_then(Value::as_bool) == Some(true))
+                    .filter_map(|k| k.get("provider").and_then(Value::as_str))
+                    .collect();
+                println!(
+                    "keys: {}",
+                    if set.is_empty() {
+                        "none".to_string()
+                    } else {
+                        set.join(", ")
+                    }
+                );
+            }
+        }
+        "llm.list_models" => {
+            if let Some(list) = value.get("models").and_then(Value::as_array) {
+                for m in list {
+                    println!("{}", s(m, "name"));
+                }
+            }
+        }
+        "llm.select" => println!("LLM is now {} {}", s(value, "provider"), s(value, "model")),
+        "llm.set_key" => println!(
+            "key for {}: {}",
+            s(value, "provider"),
+            if value.get("key_present").and_then(Value::as_bool) == Some(true) {
+                "stored"
+            } else {
+                "missing"
+            }
+        ),
+        "llm.evict" => println!("evicted: {:?}", value.get("vram")),
+        "llm.test" => println!(
+            "test ok in {} ms: {}",
+            value.get("ms").and_then(Value::as_u64).unwrap_or(0),
+            s(value, "reply")
+        ),
         "skill.read" => {
             if value.get("body").and_then(Value::as_str).is_some() {
                 println!(

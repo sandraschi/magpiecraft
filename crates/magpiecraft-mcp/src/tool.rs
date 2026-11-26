@@ -165,6 +165,55 @@ pub fn tools() -> Value {
                 "name": { "type": "string", "description": "skill folder name, for example magpiecraft-video" }
             }),
             &[]
+        ),
+        tool(
+            "magpie_llm_status",
+            "Redacted LLM config: provider, model, endpoint, per-provider key presence. No network, no key values.",
+            json!({}),
+            &[]
+        ),
+        tool(
+            "magpie_llm_list_models",
+            "Live model list for one provider, or the configured provider when omitted. \
+             Anthropic and Gemini return curated names (no list API) plus free text.",
+            json!({
+                "provider": { "type": "string", "description": "ollama, lmstudio, openai, anthropic, deepseek, meta, openrouter, custom or gemini" }
+            }),
+            &[]
+        ),
+        tool(
+            "magpie_llm_select",
+            "Persist the provider and model. For Ollama this also switches VRAM: other residents are evicted and the pick is warmed. Empty model is refused.",
+            json!({
+                "provider": { "type": "string", "description": "provider id" },
+                "model": { "type": "string", "description": "installed model name" }
+            }),
+            &["provider", "model"]
+        ),
+        tool(
+            "magpie_llm_set_key",
+            "Store one provider key locally. The reply carries presence only, never the key. Empty keeps the stored value.",
+            json!({
+                "provider": { "type": "string", "description": "cloud provider id" },
+                "api_key": { "type": "string", "description": "the key; empty means keep the stored one" }
+            }),
+            &["provider"]
+        ),
+        tool(
+            "magpie_llm_evict",
+            "Evict resident Ollama models, optionally keeping one warm. Omit keep to evict all.",
+            json!({
+                "keep": { "type": "string", "description": "model to keep warm" }
+            }),
+            &[]
+        ),
+        tool(
+            "magpie_llm_test",
+            "One live completion through the selected provider. Ok only on a real reply; curated names without a key fail.",
+            json!({
+                "prompt": { "type": "string", "description": "test prompt, default is a fixed OK probe" }
+            }),
+            &[]
         )
     ])
 }
@@ -208,6 +257,29 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
         return Ok(Command::SkillRead {
             name: opt_str(args, "name"),
         });
+    }
+    if let Some(op) = normalised.strip_prefix("magpie_llm_") {
+        return match op {
+            "status" => Ok(Command::LlmStatus),
+            "list_models" => Ok(Command::LlmListModels {
+                provider: opt_str(args, "provider"),
+            }),
+            "select" => Ok(Command::LlmSelect {
+                provider: req_str(args, "provider")?,
+                model: req_str(args, "model")?,
+            }),
+            "set_key" => Ok(Command::LlmSetKey {
+                provider: req_str(args, "provider")?,
+                api_key: opt_str(args, "api_key").unwrap_or_default(),
+            }),
+            "evict" => Ok(Command::LlmEvict {
+                keep: opt_str(args, "keep"),
+            }),
+            "test" => Ok(Command::LlmTest {
+                prompt: opt_str(args, "prompt"),
+            }),
+            _ => Err(format!("unknown tool: {name}")),
+        };
     }
     let operation = req_str(args, "operation")?;
     let op = operation.to_ascii_lowercase();
@@ -438,13 +510,13 @@ mod tests {
         let arr = list.as_array().unwrap();
         assert_eq!(
             arr.len(),
-            7,
-            "media_catalog, media_search, media_read, media_health, media_curate, media_transform, magpie_skill_read"
+            13,
+            "six media_* tools plus magpie_skill_read and six magpie_llm_* tools"
         );
         for t in arr {
             let name = t["name"].as_str().unwrap();
             assert!(
-                name.starts_with("media_") || name == "magpie_skill_read",
+                name.starts_with("media_") || name.starts_with("magpie_"),
                 "{name}"
             );
             assert!(
@@ -452,10 +524,29 @@ mod tests {
                 "MCP names must be strict: {name}"
             );
             assert!(!t["description"].as_str().unwrap().is_empty());
-            if name != "magpie_skill_read" {
+            if name.starts_with("media_") {
                 assert!(t["inputSchema"]["properties"]["operation"]["enum"].is_array());
             }
         }
+    }
+
+    #[test]
+    fn llm_tools_map_to_commands() {
+        assert_eq!(
+            to_command(
+                "magpie_llm_select",
+                &json!({"provider": "ollama", "model": "m"})
+            )
+            .unwrap()
+            .id(),
+            "llm.select"
+        );
+        assert!(to_command("magpie_llm_select", &json!({"provider": "x"})).is_err());
+        assert!(to_command("magpie_llm_nope", &json!({})).is_err());
+        assert_eq!(
+            to_command("magpie_llm_test", &json!({})).unwrap().id(),
+            "llm.test"
+        );
     }
 
     #[test]

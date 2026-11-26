@@ -1,0 +1,5 @@
+# The CLI has grown past fifty subcommands; in unoptimised builds clap's
+# generated parser needs more than the default 1 MB main-thread stack.
+# 8 MB is reserve only (paged in on use), so this costs nothing at runtime.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-args=/STACK:8388608"]

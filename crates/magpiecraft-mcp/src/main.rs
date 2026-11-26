@@ -313,6 +313,11 @@ enum Cmd {
         #[command(subcommand)]
         op: Option<SkillsOp>,
     },
+    /// LLM provider: status, models, selection, keys, VRAM, live test.
+    Llm {
+        #[command(subcommand)]
+        op: Option<LlmOp>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -329,6 +334,36 @@ enum SkillsOp {
         /// Overwrite existing files.
         #[arg(long)]
         force: bool,
+    },
+}
+
+/// `llm` verbs, mirroring the magpie_llm_* MCP tools one to one.
+#[derive(Subcommand, Debug)]
+enum LlmOp {
+    /// Redacted config: provider, model, endpoint, key presence.
+    Status,
+    /// Live model list for one provider, or the configured provider.
+    List {
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    /// Persist the provider and model (switches Ollama VRAM to the pick).
+    Use { provider: String, model: String },
+    /// Store one provider key locally. Empty keeps the stored value.
+    SetKey {
+        provider: String,
+        #[arg(long)]
+        key: Option<String>,
+    },
+    /// Evict resident Ollama models, optionally keeping one warm.
+    Evict {
+        #[arg(long)]
+        keep: Option<String>,
+    },
+    /// One live completion through the selected provider.
+    Test {
+        #[arg(long)]
+        prompt: Option<String>,
     },
 }
 
@@ -729,6 +764,39 @@ fn build(cmd: &Cmd, json_mode: bool) -> Result<(&'static str, Command), String> 
             }
             Some(SkillsOp::Export { to, force }) => {
                 return export_skills(to, *force, json_mode);
+            }
+        },
+        Cmd::Llm { op } => match op {
+            None | Some(LlmOp::Status) => (Command::LlmStatus.id(), Command::LlmStatus),
+            Some(LlmOp::List { provider }) => {
+                let c = Command::LlmListModels {
+                    provider: provider.clone(),
+                };
+                (c.id(), c)
+            }
+            Some(LlmOp::Use { provider, model }) => {
+                let c = Command::LlmSelect {
+                    provider: provider.clone(),
+                    model: model.clone(),
+                };
+                (c.id(), c)
+            }
+            Some(LlmOp::SetKey { provider, key }) => {
+                let c = Command::LlmSetKey {
+                    provider: provider.clone(),
+                    api_key: key.clone().unwrap_or_default(),
+                };
+                (c.id(), c)
+            }
+            Some(LlmOp::Evict { keep }) => {
+                let c = Command::LlmEvict { keep: keep.clone() };
+                (c.id(), c)
+            }
+            Some(LlmOp::Test { prompt }) => {
+                let c = Command::LlmTest {
+                    prompt: prompt.clone(),
+                };
+                (c.id(), c)
             }
         },
     };
