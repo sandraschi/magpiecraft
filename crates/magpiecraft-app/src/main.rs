@@ -5,6 +5,7 @@
 //! CI can prove the app opens a catalogue and browses it without a GPU.
 
 mod app;
+mod chat;
 mod covers;
 mod library;
 mod reader;

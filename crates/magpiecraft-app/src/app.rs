@@ -6,6 +6,7 @@
 //! page; the bottom is a status bar. Every menu item calls the same engine the CLI
 //! and MCP use, in process.
 
+use crate::chat::{ChatDock, ChatLine};
 use crate::covers::CoverCache;
 use crate::library::{self, BrowseState, Nav};
 use crate::reader::{Action, ReaderView};
@@ -13,7 +14,7 @@ use crate::skins::{SkinId, SkinPalette};
 use crate::theme;
 use magpiecraft_core::llm::{DiscoveredModel, LlmConfig, LlmProvider};
 use magpiecraft_core::{Catalog, MediaKind, Paths, Settings, StatsView};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::mpsc::{channel, Receiver};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +110,10 @@ enum Act {
     LlmForgetKey,
     LlmTest,
     LlmSave,
+    ToggleChat,
+    ChatSend,
+    ChatClear,
+    ChatPrompt,
     PlanRename,
     ApplyPlan(String),
     UndoJournal(String),
@@ -157,6 +162,8 @@ pub struct MagpieApp {
     llm_test_out: Option<String>,
     /// BYOK field. Starts empty every launch; only non-empty entries are stored.
     llm_key_input: String,
+    /// Chat dock state. The worker owns its catalogue handle.
+    chat: ChatDock,
 }
 
 /// The Organise page: what is uncertain, what is planned, what was applied.
@@ -242,6 +249,7 @@ impl MagpieApp {
             llm_test_rx: None,
             llm_test_out: None,
             llm_key_input: String::new(),
+            chat: ChatDock::new(),
             catalog,
         };
         app.refresh();
@@ -468,6 +476,43 @@ impl MagpieApp {
             .ok();
     }
 
+    /// What the chat sees: the open reader position or the browse spot.
+    fn chat_selection(&self) -> Value {
+        if let Some(reader) = &self.reader {
+            json!({
+                "view": "reader",
+                "key": reader.key(),
+                "page": reader.page(),
+                "count": reader.count(),
+            })
+        } else {
+            json!({
+                "view": "browse",
+                "library": self.browse.browse.library,
+                "key": self.browse_key,
+                "filter": self.browse.filter,
+            })
+        }
+    }
+
+    /// Live catalogue status for the chat preprompt, truncated by the worker.
+    fn chat_status(&mut self) -> Value {
+        use magpiecraft_core::command::{dispatch, Command};
+        dispatch(&mut self.catalog, Command::Status)
+    }
+
+    /// Send the chat input on a worker thread. Never blocks the UI.
+    fn send_chat(&mut self) {
+        if !self.chat.open {
+            self.chat.open = true;
+        }
+        let status = self.chat_status();
+        let selection = self.chat_selection();
+        let paths = self.catalog.paths().clone();
+        let config = self.llm.clone();
+        self.chat.send(&config, 10, status, selection, paths);
+    }
+
     /// Removing a library drops its index rows only. The files on disk are
     /// never touched; the engine requires the confirm flag for the same reason.
     fn remove_library(&mut self, name: String) {
@@ -543,6 +588,14 @@ impl MagpieApp {
                 Act::LlmForgetKey => self.save_llm_key(true),
                 Act::LlmTest => self.start_llm_test(),
                 Act::LlmSave => self.persist_llm("LLM settings saved"),
+                Act::ToggleChat => {
+                    self.chat.open = !self.chat.open;
+                }
+                Act::ChatSend => self.send_chat(),
+                Act::ChatClear => self.chat.clear(),
+                Act::ChatPrompt => {
+                    self.chat.show_prompt = !self.chat.show_prompt;
+                }
                 Act::Skin(skin) => self.set_skin(skin),
                 Act::ZoomIn => self.set_zoom(ctx, self.zoom * 1.1),
                 Act::ZoomOut => self.set_zoom(ctx, self.zoom / 1.1),
@@ -816,6 +869,16 @@ impl MagpieApp {
                 }
                 if ui.button("Help").clicked() {
                     actions.push(Act::GoHelp);
+                    ui.close();
+                }
+                ui.separator();
+                let chat_label = if self.chat.open {
+                    "Close chat"
+                } else {
+                    "Chat (Ctrl+J)"
+                };
+                if ui.button(chat_label).clicked() {
+                    actions.push(Act::ToggleChat);
                     ui.close();
                 }
             });
@@ -1492,6 +1555,150 @@ impl MagpieApp {
         });
     }
 
+    /// The chat dock: provider pill, context meter, messages, input bar.
+    /// Bounded like the fleet guardrail: 280 to 480 wide, wrapping text,
+    /// Send on the right of the input row.
+    fn show_chat(
+        &mut self,
+        ui: &mut egui::Ui,
+        _rect: egui::Rect,
+        palette: &SkinPalette,
+        actions: &mut Vec<Act>,
+    ) {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+        egui::Frame::NONE
+            .fill(palette.card)
+            .stroke(egui::Stroke::new(1.0, palette.border))
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let pill = if self.llm.model.trim().is_empty() {
+                        "no model".to_string()
+                    } else {
+                        // Canonical id, not the raw string: another app may have
+                        // stored an alias like "local".
+                        format!("{} | {}", self.llm.provider_enum().id(), self.llm.model)
+                    };
+                    if ui.small_button(pill).clicked() {
+                        actions.push(Act::GoSettings);
+                    }
+                    let estimate = self.chat.last_prompt.len() / 4;
+                    ui.label(
+                        egui::RichText::new(format!("~{estimate}/16384"))
+                            .size(12.0)
+                            .color(theme::dim_text(ui)),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    if ui.small_button("Prompt").clicked() {
+                        actions.push(Act::ChatPrompt);
+                    }
+                    let mut tools = self.llm.tools_enabled;
+                    if ui.checkbox(&mut tools, "Tools").changed() {
+                        self.llm.tools_enabled = tools;
+                        actions.push(Act::LlmSave);
+                    }
+                    let max_label = if self.chat.maximized { "Dock" } else { "Max" };
+                    if ui.small_button(max_label).clicked() {
+                        self.chat.maximized = !self.chat.maximized;
+                    }
+                    if ui.small_button("Clear").clicked() {
+                        actions.push(Act::ChatClear);
+                    }
+                    if ui.small_button("Close").clicked() {
+                        actions.push(Act::ToggleChat);
+                    }
+                });
+                if !self.llm.provider_enum().local() {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "This chat sends catalogue excerpts to {}",
+                            self.llm.provider
+                        ))
+                        .size(12.0)
+                        .color(palette.accent),
+                    );
+                }
+                if self.chat.show_prompt {
+                    egui::Window::new("Prompt sent to the model")
+                        .resizable(true)
+                        .show(ui.ctx(), |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                ui.label(format!("~{} tokens", self.chat.last_prompt.len() / 4));
+                                ui.monospace(&self.chat.last_prompt);
+                            });
+                        });
+                }
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        if self.chat.lines.is_empty() {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Ask about your collection. Grounded in this catalogue, \
+                                     never the internet. Reads run read-only tools; writes live \
+                                     in the app, the CLI and MCP.",
+                                )
+                                .color(theme::dim_text(ui)),
+                            );
+                        }
+                        for line in self.chat.lines.clone() {
+                            match line {
+                                ChatLine::User(text) => {
+                                    ui.label(egui::RichText::new("You").strong());
+                                    ui.label(&text);
+                                }
+                                ChatLine::Assistant(text) => {
+                                    ui.label(egui::RichText::new("Magpie").color(palette.accent));
+                                    ui.label(&text);
+                                }
+                                ChatLine::Tool { name, args, result } => {
+                                    egui::CollapsingHeader::new(format!("tool: {name}")).show(
+                                        ui,
+                                        |ui| {
+                                            ui.label(args.to_string());
+                                            ui.label(crate::chat::truncate_result(&result));
+                                        },
+                                    );
+                                }
+                                ChatLine::Error(text) => {
+                                    ui.label(egui::RichText::new(text).color(palette.accent));
+                                }
+                            }
+                            ui.add_space(4.0);
+                        }
+                        if self.chat.busy {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                if ui.small_button("Cancel").clicked() {
+                                    self.chat.cancel();
+                                }
+                            });
+                        }
+                    });
+                ui.separator();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    if ui.button("Send").clicked() && !self.chat.busy {
+                        actions.push(Act::ChatSend);
+                    }
+                    let response = ui.add(
+                        egui::TextEdit::multiline(&mut self.chat.input)
+                            .desired_rows(2)
+                            .hint_text(
+                                "Ask about your collection (Enter sends, Shift+Enter newline)",
+                            ),
+                    );
+                    if response.has_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift)
+                        && !self.chat.busy
+                    {
+                        actions.push(Act::ChatSend);
+                    }
+                });
+            });
+    }
+
     /// How agents use this app without any LLM key: MCP over stdio.
     fn agentic_card(&self, ui: &mut egui::Ui, palette: &SkinPalette) {
         theme::card(ui, palette, None, &self.decor(), |ui| {
@@ -1879,6 +2086,7 @@ impl MagpieApp {
                             ("Skin: Midnight Archive", Act::Skin(SkinId::MidnightArchive)),
                             ("Statistics", Act::GoStats),
                             ("Organise", Act::GoOrganise),
+                            ("Chat", Act::ToggleChat),
                             ("Plan renames", Act::PlanRename),
                             ("Settings", Act::GoSettings),
                             ("Libraries", Act::GoLibraries),
@@ -1983,11 +2191,12 @@ impl MagpieApp {
     fn handle_app_keys(&mut self, ctx: &egui::Context) {
         // A text field holds keyboard focus: global shortcuts stay out of the way.
         let typing = ctx.egui_wants_keyboard_input();
-        let (slash, escape, ctrl_f, zoomin, zoomout, zero) = ctx.input(|i| {
+        let (slash, escape, ctrl_f, ctrl_j, zoomin, zoomout, zero) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Slash),
                 i.key_pressed(egui::Key::Escape),
                 i.key_pressed(egui::Key::F) && (i.modifiers.ctrl || i.modifiers.command),
+                i.key_pressed(egui::Key::J) && (i.modifiers.ctrl || i.modifiers.command),
                 i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals),
                 i.key_pressed(egui::Key::Minus),
                 i.key_pressed(egui::Key::Num0),
@@ -2005,6 +2214,9 @@ impl MagpieApp {
         }
         if !typing && (slash || ctrl_f) {
             self.focus_search_next = true;
+        }
+        if !typing && ctrl_j {
+            self.chat.open = !self.chat.open;
         }
         // Escape closes a dialog, but never while typing in one of its fields:
         // abandoning the add-library form mid-path would silently lose input.
@@ -2029,6 +2241,12 @@ impl eframe::App for MagpieApp {
         }
         self.poll_scan();
         self.poll_llm(ctx);
+        let home = self.catalog.paths().home().to_path_buf();
+        for line in self.chat.poll(ctx) {
+            if self.llm.save_transcripts {
+                crate::chat::append_transcript(&home, std::slice::from_ref(&line));
+            }
+        }
         self.handle_app_keys(ctx);
         self.covers.poll(ctx);
     }
@@ -2065,83 +2283,111 @@ impl eframe::App for MagpieApp {
         ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
             let palette = self.palette();
             theme::paint_backdrop(ui, &palette, content, &self.decor());
-            match self.page {
-                Page::Browse => {
-                    let nav = egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            library::show(
-                                ui,
-                                &mut self.browse,
-                                &mut self.covers,
-                                &mut self.catalog,
-                                &palette,
-                            )
-                        })
-                        .inner;
-                    match nav {
-                        Nav::Open(key) => {
-                            self.browse_key = key;
-                            self.browse.search = None;
-                            self.refresh();
-                        }
-                        Nav::Read(key) => self.open_reader(key),
-                        Nav::Launch(key) => match self.catalog.open_item(&key) {
-                            Ok(report) => {
-                                let player = report["player"].as_str().unwrap_or("player");
-                                let start = report["start_secs"].as_i64().unwrap_or(0);
-                                self.status = if start > 0 {
-                                    format!(
-                                        "opened in {player} at {}",
-                                        magpiecraft_core::format_secs(
-                                            u64::try_from(start).unwrap_or(0)
-                                        )
+            if self.chat.open && self.chat.maximized {
+                self.show_chat(ui, content, &palette, &mut actions);
+            } else {
+                let page_rect = if self.chat.open && content.width() > 700.0 {
+                    let chat_w = 360.0f32.clamp(280.0, 480.0).min(content.width() * 0.45);
+                    egui::Rect::from_min_max(
+                        content.min,
+                        egui::pos2(content.right() - chat_w, content.bottom()),
+                    )
+                } else {
+                    content
+                };
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(page_rect),
+                    |ui| match self.page {
+                        Page::Browse => {
+                            let nav = egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    library::show(
+                                        ui,
+                                        &mut self.browse,
+                                        &mut self.covers,
+                                        &mut self.catalog,
+                                        &palette,
                                     )
-                                } else {
-                                    format!("opened in {player}")
-                                };
+                                })
+                                .inner;
+                            match nav {
+                                Nav::Open(key) => {
+                                    self.browse_key = key;
+                                    self.browse.search = None;
+                                    self.refresh();
+                                }
+                                Nav::Read(key) => self.open_reader(key),
+                                Nav::Launch(key) => match self.catalog.open_item(&key) {
+                                    Ok(report) => {
+                                        let player = report["player"].as_str().unwrap_or("player");
+                                        let start = report["start_secs"].as_i64().unwrap_or(0);
+                                        self.status = if start > 0 {
+                                            format!(
+                                                "opened in {player} at {}",
+                                                magpiecraft_core::format_secs(
+                                                    u64::try_from(start).unwrap_or(0)
+                                                )
+                                            )
+                                        } else {
+                                            format!("opened in {player}")
+                                        };
+                                        self.refresh();
+                                    }
+                                    Err(e) => self.status = format!("cannot open: {e}"),
+                                },
+                                Nav::None => {}
+                            }
+                        }
+                        Page::Reader => {
+                            let mut back = false;
+                            if let Some(reader) = self.reader.as_mut() {
+                                if let Action::Back =
+                                    reader.show(ui, &mut self.catalog, content, &palette)
+                                {
+                                    back = true;
+                                }
+                            } else {
+                                ui.label("No item is open.");
+                            }
+                            if back {
+                                self.page = Page::Browse;
+                                self.reader = None;
                                 self.refresh();
                             }
-                            Err(e) => self.status = format!("cannot open: {e}"),
-                        },
-                        Nav::None => {}
-                    }
-                }
-                Page::Reader => {
-                    let mut back = false;
-                    if let Some(reader) = self.reader.as_mut() {
-                        if let Action::Back = reader.show(ui, &mut self.catalog, content, &palette)
-                        {
-                            back = true;
                         }
-                    } else {
-                        ui.label("No item is open.");
-                    }
-                    if back {
-                        self.page = Page::Browse;
-                        self.reader = None;
-                        self.refresh();
-                    }
-                }
-                Page::Stats => {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| self.stats_page(ui));
-                }
-                Page::Organise => {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| self.organise_page(ui, &mut actions));
-                }
-                Page::Settings => {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| self.settings_page(&ctx, ui, &mut actions));
-                }
-                Page::Help => {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| self.help_page(ui));
+                        Page::Stats => {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| self.stats_page(ui));
+                        }
+                        Page::Organise => {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| self.organise_page(ui, &mut actions));
+                        }
+                        Page::Settings => {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| self.settings_page(&ctx, ui, &mut actions));
+                        }
+                        Page::Help => {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| self.help_page(ui));
+                        }
+                    },
+                );
+                if self.chat.open && !self.chat.maximized && content.width() > 700.0 {
+                    let chat_w = 360.0f32.clamp(280.0, 480.0).min(content.width() * 0.45);
+                    let chat_rect = egui::Rect::from_min_max(
+                        egui::pos2(content.right() - chat_w, content.top()),
+                        egui::pos2(content.right(), content.bottom()),
+                    );
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(chat_rect), |ui| {
+                        let palette = self.palette();
+                        self.show_chat(ui, chat_rect, &palette, &mut actions);
+                    });
                 }
             }
         });

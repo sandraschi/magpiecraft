@@ -376,3 +376,17 @@ None. Two known limits are deliberate and documented rather than blockers:
   instructions. Discovery and test run on worker threads; the UI never waits.
 - Provider switches clear the model (no blind defaults). Agentic DE coop card
   with the MCP stdio command. start.ps1 gains -Mcp.
+
+## 2026-11-26: standard shell, slice 4d part 2 - chat dock
+
+- Right dock (360px bounded, wrap, Send right of input), Ctrl+J, Window menu,
+  palette entry, maximized-to-viewport mode. Header: provider pill (canonical
+  id, opens Settings), context meter, View prompt, Tools toggle, Clear/Close.
+- Worker thread per send with cancel; read-only tools run through dispatch
+  (allowlist enforced by test); anything else refuses with a pointer, never a
+  confirm card, because the chat exposes zero writes. Six tool rounds max.
+- Preprompt: header rules, all ten skills, tool catalogue, live status,
+  selection, user extra; capped parts truncate with a marker. Cloud banner
+  when the provider is not local. Transcripts to chat/YYYY-MM-DD.jsonl.
+- Verified: 3 chat unit tests (allowlist, truncation, dates), open-dock and
+  closed screenshots, --smoke green.
