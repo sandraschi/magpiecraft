@@ -417,3 +417,16 @@ None. Two known limits are deliberate and documented rather than blockers:
   when the provider is not local. Transcripts to chat/YYYY-MM-DD.jsonl.
 - Verified: 3 chat unit tests (allowlist, truncation, dates), open-dock and
   closed screenshots, --smoke green.
+
+## 2026-11-26: Tier 3 local subtitle generation (whisperx/whisper)
+
+- tools::transcribe prefers whisperx (CUDA, word-level), falls back to openai-whisper; same flags, output <stem>.srt renamed to the requested name, refuses to overwrite. Missing binary is Missing, never silent.
+- Command::SubsGenerate (key, model?, lang?, out?) defaults to <stem>.<lang>.srt beside the source. MCP op subs_generate, CLI verb, human output. No downloads, no cloud.
+- Verified by mapping tests, invalid-key refusal, live binary presence on Goliath; no full transcription run yet (minutes per file, needs a real item).
+
+## 2026-11-26: drive shell S1 - pattern proposal scan + Settings UI
+
+- Convention locked: level-1 Multimedia Files, level-2 collections (Manga - Nihongo, Anime - Series, Music - Jazz, Video). Defaults stay empty; E:/F:/K:/L: is user config, not code.
+- magpiecraft_drives::propose_libraries walks level-2 folders with kind guesses (prefix then contains rules) and 20 sample files; unknown stays unknown for the AI pass. Settings drive_roots + media_folder with sanitise, CLI and MCP surface, tests on recorded + live-built trees.
+- Settings Media drives card: editable roots, Save, Scan drives on a worker, per-row kind picker with Add, Add all known. Confirming builds real libraries via LibraryAdd.
+- Next: AI classification pass for unknowns (local model), left tree, right tabs, dashboard.

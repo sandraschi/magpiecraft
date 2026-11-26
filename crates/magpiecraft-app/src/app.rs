@@ -115,6 +115,13 @@ enum Act {
     ChatClear,
     ChatPrompt,
     CheckDrives,
+    ScanDrives,
+    ProposeAdd {
+        name: String,
+        root: String,
+        kind: String,
+    },
+    ProposeAddAll,
     PlanRename,
     ApplyPlan(String),
     UndoJournal(String),
@@ -148,6 +155,14 @@ pub struct MagpieApp {
     /// Library name armed for removal. The row shows Confirm/Keep instead of
     /// removing on the first click.
     remove_armed: Option<String>,
+    /// Last drive proposal scan (JSON value, never cached in the catalogue).
+    drive_proposals: Option<Value>,
+    drive_propose_busy: bool,
+    drive_propose_rx: Option<Receiver<Value>>,
+    /// Editable drive roots buffer (one per line). Saved explicitly.
+    drive_roots_text: String,
+    /// Per-row kind overrides when confirming proposals, by folder path.
+    propose_kinds: std::collections::HashMap<String, String>,
     /// Selected Help Center tab.
     help_tab: HelpTab,
     /// LLM provider state. The file is shared across craft apps; this is the
@@ -244,6 +259,11 @@ impl MagpieApp {
             focus_search_next: false,
             organise: None,
             remove_armed: None,
+            drive_proposals: None,
+            drive_propose_busy: false,
+            drive_propose_rx: None,
+            propose_kinds: std::collections::HashMap::new(),
+            drive_roots_text: String::new(),
             help_tab: HelpTab::GettingStarted,
             llm: magpiecraft_core::llm::load_config(),
             llm_models: Vec::new(),
@@ -261,6 +281,7 @@ impl MagpieApp {
             catalog,
         };
         app.refresh();
+        app.drive_roots_text = app.settings.drive_roots.join("\n");
         match start_page.as_str() {
             "organise" => {
                 app.refresh_organise();
@@ -547,6 +568,114 @@ impl MagpieApp {
     }
 
     /// Poll the drive worker. Call every frame; repaints while busy.
+    /// Propose libraries from the drive roots on a worker thread. Nothing is
+    /// created; confirming a proposal adds a real library.
+    fn start_propose(&mut self) {
+        if self.drive_propose_busy {
+            return;
+        }
+        let paths = self.catalog.paths().clone();
+        let (tx, rx) = channel::<Value>();
+        self.drive_propose_rx = Some(rx);
+        self.drive_propose_busy = true;
+        self.propose_kinds.clear();
+        std::thread::Builder::new()
+            .name("magpie-propose".to_string())
+            .spawn(move || {
+                let report = match Catalog::open(paths) {
+                    Ok(mut catalog) => {
+                        use magpiecraft_core::command::{dispatch, Command};
+                        dispatch(
+                            &mut catalog,
+                            Command::ProposeLibraries {
+                                roots: None,
+                                media_folder: None,
+                            },
+                        )
+                    }
+                    Err(e) => json!({"ok": false, "error": e.to_string()}),
+                };
+                let _ = tx.send(report);
+            })
+            .ok();
+    }
+
+    /// Poll the proposal worker. Call every frame; repaints while busy.
+    fn poll_propose(&mut self, ctx: &egui::Context) {
+        let mut busy = false;
+        if let Some(rx) = &self.drive_propose_rx {
+            match rx.try_recv() {
+                Ok(report) => {
+                    self.drive_proposals = Some(report);
+                    self.drive_propose_busy = false;
+                    self.drive_propose_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => busy = true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.status = "proposal scan stopped unexpectedly".to_string();
+                    self.drive_propose_busy = false;
+                    self.drive_propose_rx = None;
+                }
+            }
+        }
+        if busy {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Confirm one proposal as a real library (kind may be overridden in the row).
+    fn confirm_proposal(&mut self, name: String, root: String, kind: String) {
+        if self
+            .catalog
+            .add_library(&name, &root, &kind, false, None)
+            .is_ok()
+        {
+            self.status = format!("added library {name} at {root}");
+            self.propose_kinds.remove(&root);
+            self.refresh();
+        } else {
+            self.status = "add failed (duplicate name?)".to_string();
+        }
+    }
+
+    /// Confirm every proposal that already has a kind. Unknowns stay for review.
+    fn confirm_all_proposals(&mut self) {
+        let proposals = self
+            .drive_proposals
+            .clone()
+            .and_then(|v| v.get("proposals").cloned())
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
+        let mut added = 0;
+        for p in &proposals {
+            let Some(root) = p.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            let name = p
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string();
+            let kind = self
+                .propose_kinds
+                .get(root)
+                .cloned()
+                .or_else(|| p.get("kind").and_then(Value::as_str).map(str::to_string));
+            if let Some(kind) = kind {
+                if self
+                    .catalog
+                    .add_library(&name, root, &kind, false, None)
+                    .is_ok()
+                {
+                    added += 1;
+                }
+            }
+        }
+        self.propose_kinds.clear();
+        self.status = format!("added {added} libraries from the drive scan");
+        self.refresh();
+    }
+
     fn poll_drives(&mut self, ctx: &egui::Context) {
         let mut busy = false;
         if let Some(rx) = &self.drive_rx {
@@ -653,6 +782,9 @@ impl MagpieApp {
                     self.chat.show_prompt = !self.chat.show_prompt;
                 }
                 Act::CheckDrives => self.start_drive_check(),
+                Act::ScanDrives => self.start_propose(),
+                Act::ProposeAdd { name, root, kind } => self.confirm_proposal(name, root, kind),
+                Act::ProposeAddAll => self.confirm_all_proposals(),
                 Act::Skin(skin) => self.set_skin(skin),
                 Act::ZoomIn => self.set_zoom(ctx, self.zoom * 1.1),
                 Act::ZoomOut => self.set_zoom(ctx, self.zoom / 1.1),
@@ -1288,6 +1420,8 @@ impl MagpieApp {
             }
         });
         ui.add_space(8.0);
+        self.propose_card(ui, &palette, actions);
+        ui.add_space(8.0);
         theme::card(ui, &palette, Some(palette.accent), &self.decor(), |ui| {
             ui.label(egui::RichText::new("Settings").size(19.0).strong());
             ui.add_space(4.0);
@@ -1772,6 +1906,176 @@ impl MagpieApp {
         });
     }
 
+    /// Media drives and the proposal scan. Roots are plain drive letters (one
+    /// per line, for example E:). Level-2 folders of "Multimedia Files" become
+    /// library proposals with a pattern kind guess; unknown rows stay for the AI
+    /// pass or manual correction. Confirming adds a real library.
+    fn propose_card(&mut self, ui: &mut egui::Ui, palette: &SkinPalette, actions: &mut Vec<Act>) {
+        theme::card(ui, palette, None, &self.decor(), |ui| {
+            ui.label(egui::RichText::new("Media drives").size(19.0).strong());
+            ui.label(egui::RichText::new("One drive letter per line. The scan reads the level-1 media folder on each drive and proposes one library per level-2 folder. Confirming adds the library; nothing is created by the scan itself.").color(theme::dim_text(ui)));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("Roots");
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.drive_roots_text)
+                        .desired_rows(2)
+                        .desired_width(120.0)
+                        .hint_text("E:\nF:"),
+                );
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Folder");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.settings.media_folder)
+                                .desired_width(180.0),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.small_button("Save drives").clicked() {
+                            self.settings.drive_roots = self
+                                .drive_roots_text
+                                .lines()
+                                .map(|l| l.trim().to_string())
+                                .filter(|l| !l.is_empty())
+                                .collect();
+                            self.save_settings();
+                            self.drive_roots_text = self.settings.drive_roots.join("\n");
+                        }
+                        if ui
+                            .small_button(if self.drive_propose_busy {
+                                "Scanning..."
+                            } else {
+                                "Scan drives"
+                            })
+                            .clicked()
+                        {
+                            actions.push(Act::ScanDrives);
+                        }
+                    });
+                });
+            });
+            if let Some(report) = self.drive_proposals.clone() {
+                if report.get("ok").and_then(Value::as_bool) != Some(true) {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "scan failed: {}",
+                            report
+                                .get("error")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown")
+                        ))
+                        .color(palette.accent),
+                    );
+                } else {
+                    let proposals = report
+                        .get("proposals")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let known = proposals
+                        .iter()
+                        .filter(|p| p.get("kind").and_then(Value::as_str).is_some())
+                        .count();
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "{} proposals, {} with a kind guess",
+                            proposals.len(),
+                            known
+                        ));
+                        if !proposals.is_empty() && ui.small_button("Add all known").clicked() {
+                            actions.push(Act::ProposeAddAll);
+                        }
+                    });
+                    for p in &proposals {
+                        let Some(root) = p.get("path").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        let name = p.get("name").and_then(Value::as_str).unwrap_or("?");
+                        let guessed = p.get("kind").and_then(Value::as_str).map(str::to_string);
+                        let chosen = self
+                            .propose_kinds
+                            .get(root)
+                            .cloned()
+                            .or_else(|| guessed.clone())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(name).strong());
+                            ui.label(
+                                egui::RichText::new(root)
+                                    .size(12.0)
+                                    .color(theme::dim_text(ui)),
+                            );
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            for kind in [
+                                "comics",
+                                "manga",
+                                "magazines",
+                                "video",
+                                "audio",
+                                "ebook",
+                                "photo",
+                                "other",
+                            ] {
+                                if ui.selectable_label(chosen == kind, kind).clicked() {
+                                    self.propose_kinds
+                                        .insert(root.to_string(), kind.to_string());
+                                }
+                            }
+                            let reason = p.get("reason").and_then(Value::as_str).unwrap_or("");
+                            let conf = p.get("confidence").and_then(Value::as_f64).unwrap_or(0.0);
+                            ui.label(
+                                egui::RichText::new(format!("{reason} ({:.0}%)", conf * 100.0))
+                                    .size(12.0)
+                                    .color(theme::dim_text(ui)),
+                            );
+                        });
+                        if let Some(samples) = p.get("samples").and_then(Value::as_array) {
+                            let shown: Vec<&str> =
+                                samples.iter().filter_map(Value::as_str).take(3).collect();
+                            if !shown.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(shown.join(", "))
+                                        .size(12.0)
+                                        .color(theme::dim_text(ui)),
+                                );
+                            }
+                        }
+                        ui.horizontal(|ui| {
+                            let ready = chosen != "unknown";
+                            if ui
+                                .add_enabled(
+                                    ready,
+                                    egui::Button::new(if ready {
+                                        "Add library"
+                                    } else {
+                                        "Pick a kind first"
+                                    }),
+                                )
+                                .clicked()
+                            {
+                                actions.push(Act::ProposeAdd {
+                                    name: name.to_string(),
+                                    root: root.to_string(),
+                                    kind: chosen.clone(),
+                                });
+                            }
+                        });
+                    }
+                    if let Some(warnings) = report.get("warnings").and_then(Value::as_array) {
+                        for w in warnings.iter().filter_map(Value::as_str) {
+                            ui.label(egui::RichText::new(format!("! {w}")).color(palette.accent));
+                        }
+                    }
+                }
+            } else if self.drive_propose_busy {
+                ui.label("Scanning drives...");
+            }
+        });
+    }
+
     fn stats_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
         let palette = self.palette();
         let stats = self.stats.clone().unwrap_or_default();
@@ -2024,6 +2328,7 @@ impl MagpieApp {
                 "Organise: film and TV naming presets, rename plans with diff, journal and undo, quarantine instead of delete, review queue.",
                 "Verify: BLAKE3 manifests, duplicate and near-duplicate grouping, verification schedule, backup status and verified copies.",
                 "Drives: physical disks behind the libraries with health warnings (Stats page).",
+                "Drive scan: one proposed library per level-2 folder (Settings).",
                 "Subtitles: list, shift, convert, extract and locally generate (whisperx/whisper) sidecar files next to your films.",
                 "Convert plans: FFmpeg presets turned into reviewable plans, applied through the same journal as renames.",
             ],
@@ -2402,6 +2707,7 @@ impl eframe::App for MagpieApp {
         self.poll_scan();
         self.poll_llm(ctx);
         self.poll_drives(ctx);
+        self.poll_propose(ctx);
         let home = self.catalog.paths().home().to_path_buf();
         for line in self.chat.poll(ctx) {
             if self.llm.save_transcripts {

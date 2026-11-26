@@ -31,6 +31,7 @@ No telemetry, no cloud account. This file mirrors the in-app Help Center.
 - Convert plans: FFmpeg presets turned into reviewable plans, applied through
   the same journal as renames.
 - Drives: physical disks behind the libraries with health warnings.
+- Drive scan: propose one library per level-2 folder of Multimedia Files on each media drive (Settings); confirm what the patterns could not kind.
 
 ## Usage
 

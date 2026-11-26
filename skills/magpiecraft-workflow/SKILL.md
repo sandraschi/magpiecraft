@@ -20,6 +20,7 @@ library.
 
 - Add a folder: `media_catalog` operation `library_add` (name, root, kind,
   mature flag). List them with operation `libraries`.
+- Propose: `media_catalog` operation `propose_libraries` suggests one library per level-2 drive folder; confirm the unknowns.
 - Scan: `media_catalog` operation `scan`. Incremental by default; `full`
   re-reads everything. Removing a library (`library_remove` with
   `confirm: true`) drops index rows only.
