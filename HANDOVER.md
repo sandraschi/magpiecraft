@@ -281,3 +281,17 @@ None. Two known limits are deliberate and documented rather than blockers:
 | `mcp-central-docs/projects/mediacraft/PRD.md` | The binding PRD (v2) |
 | `mcp-central-docs/projects/comiccraft/PRD.md` | Comics module scope |
 | `mcp-central-docs/operations/session-log/craft-opencode-2026-11-24.md` | This session's log |
+
+## 2026-11-26: grid stagger and dialog keys
+
+- **Stair-step cards fixed.** `horizontal_wrapped` centers each card (`Align::Center`),
+  so any height difference staged the tops. The library grid is now row-major: columns
+  from available width, one `horizontal` strip per row, every card a fixed
+  `CARD_HEIGHT` that fits its content exactly. Verified with a screenshot, old Tier-1
+  shot confirms the stagger predates the skins work.
+- **Dialog keys.** Global shortcuts now use `egui_wants_keyboard_input()` instead of
+  `memory.focused().is_some()`, so typing in any field (search, filter, add-library
+  path) never triggers app keys, and clicking a button no longer silently disables
+  `/` and Ctrl+F. Escape closes a dialog only when not typing. Enter submits the
+  Add-library form.
+- Gates: `cargo fmt --check`, clippy `-D warnings`, 184 workspace tests, all green.

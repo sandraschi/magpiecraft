@@ -1028,7 +1028,12 @@ impl MagpieApp {
                         });
                         ui.checkbox(&mut self.new_mature, "Flag as mature (hidden by default)");
                         ui.add_space(4.0);
-                        if ui.button("Add library").clicked() {
+                        let mut submit = ui.button("Add library").clicked();
+                        // Enter submits the form, so a path can be finished from the keyboard.
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            submit = true;
+                        }
+                        if submit {
                             let name = self.new_name.trim().to_string();
                             let root = self.new_root.trim().to_string();
                             let kind = self.new_kind.clone();
@@ -1171,7 +1176,8 @@ impl MagpieApp {
     }
 
     fn handle_app_keys(&mut self, ctx: &egui::Context) {
-        let typing = ctx.memory(|m| m.focused().is_some());
+        // A text field holds keyboard focus: global shortcuts stay out of the way.
+        let typing = ctx.egui_wants_keyboard_input();
         let (slash, escape, ctrl_f, zoomin, zoomout, zero) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Slash),
@@ -1195,7 +1201,9 @@ impl MagpieApp {
         if !typing && (slash || ctrl_f) {
             self.focus_search_next = true;
         }
-        if escape && self.dialog != Dialog::None {
+        // Escape closes a dialog, but never while typing in one of its fields:
+        // abandoning the add-library form mid-path would silently lose input.
+        if escape && !typing && self.dialog != Dialog::None {
             self.dialog = Dialog::None;
         }
     }
