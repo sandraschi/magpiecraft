@@ -11,7 +11,9 @@ use crate::library::{self, BrowseState, Nav};
 use crate::reader::{Action, ReaderView};
 use crate::skins::{SkinId, SkinPalette};
 use crate::theme;
+use magpiecraft_core::llm::{DiscoveredModel, LlmConfig, LlmProvider};
 use magpiecraft_core::{Catalog, MediaKind, Paths, Settings, StatsView};
+use serde_json::Value;
 use std::sync::mpsc::{channel, Receiver};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +102,13 @@ enum Act {
     ScanLibrary(String),
     RemoveLibrary(String),
     HelpTab(HelpTab),
+    LlmDiscover,
+    LlmProvider(LlmProvider),
+    LlmUseModel(String),
+    LlmSaveKey,
+    LlmForgetKey,
+    LlmTest,
+    LlmSave,
     PlanRename,
     ApplyPlan(String),
     UndoJournal(String),
@@ -135,6 +144,19 @@ pub struct MagpieApp {
     remove_armed: Option<String>,
     /// Selected Help Center tab.
     help_tab: HelpTab,
+    /// LLM provider state. The file is shared across craft apps; this is the
+    /// in-memory copy, saved on every change.
+    llm: LlmConfig,
+    /// Last discovery result for the model picker.
+    llm_models: Vec<DiscoveredModel>,
+    llm_scan_error: Option<String>,
+    llm_scanning: bool,
+    llm_scan_rx: Option<Receiver<(Vec<DiscoveredModel>, Option<String>)>>,
+    llm_testing: bool,
+    llm_test_rx: Option<Receiver<Result<Value, String>>>,
+    llm_test_out: Option<String>,
+    /// BYOK field. Starts empty every launch; only non-empty entries are stored.
+    llm_key_input: String,
 }
 
 /// The Organise page: what is uncertain, what is planned, what was applied.
@@ -211,6 +233,15 @@ impl MagpieApp {
             organise: None,
             remove_armed: None,
             help_tab: HelpTab::GettingStarted,
+            llm: magpiecraft_core::llm::load_config(),
+            llm_models: Vec::new(),
+            llm_scan_error: None,
+            llm_scanning: false,
+            llm_scan_rx: None,
+            llm_testing: false,
+            llm_test_rx: None,
+            llm_test_out: None,
+            llm_key_input: String::new(),
             catalog,
         };
         app.refresh();
@@ -268,6 +299,173 @@ impl MagpieApp {
     fn open_reader(&mut self, key: String) {
         self.reader = Some(ReaderView::open(&mut self.catalog, &key));
         self.page = Page::Reader;
+    }
+
+    /// Poll the LLM worker threads. Blocking provider calls run on spawned
+    /// threads; this drains their channels every frame and repaints while busy.
+    fn poll_llm(&mut self, ctx: &egui::Context) {
+        let mut busy = false;
+        if let Some(rx) = &self.llm_scan_rx {
+            match rx.try_recv() {
+                Ok((models, error)) => {
+                    self.llm_models = models;
+                    self.llm_scan_error = error;
+                    self.llm_scanning = false;
+                    self.llm_scan_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => busy = true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.llm_scan_error = Some("discovery thread stopped".to_string());
+                    self.llm_scanning = false;
+                    self.llm_scan_rx = None;
+                }
+            }
+        }
+        if let Some(rx) = &self.llm_test_rx {
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.llm_test_out = Some(match result {
+                        Ok(value) => format!(
+                            "ok in {} ms: {}",
+                            value.get("ms").and_then(Value::as_u64).unwrap_or(0),
+                            value.get("reply").and_then(Value::as_str).unwrap_or("")
+                        ),
+                        Err(e) => format!("test failed: {e}"),
+                    });
+                    self.llm_testing = false;
+                    self.llm_test_rx = None;
+                    self.refresh_llm();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => busy = true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.llm_test_out = Some("test thread stopped".to_string());
+                    self.llm_testing = false;
+                    self.llm_test_rx = None;
+                }
+            }
+        }
+        if busy {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Re-read the shared LLM config (CLI/MCP edits show up live).
+    fn refresh_llm(&mut self) {
+        self.llm = magpiecraft_core::llm::load_config();
+    }
+
+    fn persist_llm(&mut self, message: &str) {
+        match magpiecraft_core::llm::save_config(&self.llm) {
+            Ok(()) => self.status = message.to_string(),
+            Err(e) => self.status = format!("LLM settings not saved: {e}"),
+        }
+    }
+
+    /// Probe the configured provider on a worker thread. Never blocks the UI.
+    fn start_discover(&mut self) {
+        if self.llm_scanning {
+            return;
+        }
+        let config = self.llm.clone();
+        let (tx, rx) = channel::<(Vec<DiscoveredModel>, Option<String>)>();
+        self.llm_scan_rx = Some(rx);
+        self.llm_scanning = true;
+        self.llm_scan_error = None;
+        std::thread::Builder::new()
+            .name("magpie-llm-scan".to_string())
+            .spawn(move || {
+                let out = magpiecraft_core::llm::discover_models(&config);
+                let _ = tx.send(out);
+            })
+            .ok();
+    }
+
+    /// A provider switch starts with an empty model: no blind defaults.
+    fn set_llm_provider(&mut self, provider: LlmProvider) {
+        self.llm.provider = provider.id().to_string();
+        self.llm.model.clear();
+        self.llm_models.clear();
+        self.llm_key_input.clear();
+        self.llm_test_out = None;
+        self.persist_llm("provider switched: pick an installed model");
+    }
+
+    /// Persist the pick through the bus (Ollama also switches VRAM) and
+    /// re-read the shared file.
+    fn use_llm_model(&mut self, model: String) {
+        use magpiecraft_core::command::{dispatch, Command};
+        let out = dispatch(
+            &mut self.catalog,
+            Command::LlmSelect {
+                provider: self.llm.provider.clone(),
+                model,
+            },
+        );
+        if out.get("ok").and_then(Value::as_bool) == Some(true) {
+            self.status = format!(
+                "LLM is now {} {}",
+                out.get("provider").and_then(Value::as_str).unwrap_or(""),
+                out.get("model").and_then(Value::as_str).unwrap_or("")
+            );
+        } else {
+            self.status = format!(
+                "LLM select failed: {}",
+                out.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            );
+        }
+        self.refresh_llm();
+    }
+
+    /// Store the BYOK field, or forget the stored key. Empty keeps storage.
+    fn save_llm_key(&mut self, forget: bool) {
+        use magpiecraft_core::command::{dispatch, Command};
+        let key = self.llm_key_input.trim().to_string();
+        if key.is_empty() && !forget {
+            self.status = "type a key first, or Forget to clear the stored one".to_string();
+            return;
+        }
+        let out = dispatch(
+            &mut self.catalog,
+            Command::LlmSetKey {
+                provider: self.llm.provider.clone(),
+                api_key: key,
+                clear: forget,
+            },
+        );
+        self.llm_key_input.clear();
+        self.status = if out.get("ok").and_then(Value::as_bool) == Some(true) {
+            "key stored (presence only from here on)".to_string()
+        } else {
+            format!(
+                "key not stored: {}",
+                out.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            )
+        };
+        self.refresh_llm();
+    }
+
+    /// One live completion on a worker thread; the UI never waits on it.
+    fn start_llm_test(&mut self) {
+        if self.llm_testing {
+            return;
+        }
+        let config = self.llm.clone();
+        let (tx, rx) = channel::<Result<Value, String>>();
+        self.llm_test_rx = Some(rx);
+        self.llm_testing = true;
+        self.llm_test_out = None;
+        std::thread::Builder::new()
+            .name("magpie-llm-test".to_string())
+            .spawn(move || {
+                let out = magpiecraft_core::llm::test_completion(&config, None)
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(out);
+            })
+            .ok();
     }
 
     /// Removing a library drops its index rows only. The files on disk are
@@ -338,6 +536,13 @@ impl MagpieApp {
                     self.page = Page::Help;
                     self.help_tab = tab;
                 }
+                Act::LlmDiscover => self.start_discover(),
+                Act::LlmProvider(provider) => self.set_llm_provider(provider),
+                Act::LlmUseModel(model) => self.use_llm_model(model),
+                Act::LlmSaveKey => self.save_llm_key(false),
+                Act::LlmForgetKey => self.save_llm_key(true),
+                Act::LlmTest => self.start_llm_test(),
+                Act::LlmSave => self.persist_llm("LLM settings saved"),
                 Act::Skin(skin) => self.set_skin(skin),
                 Act::ZoomIn => self.set_zoom(ctx, self.zoom * 1.1),
                 Act::ZoomOut => self.set_zoom(ctx, self.zoom / 1.1),
@@ -1059,6 +1264,10 @@ impl MagpieApp {
             }
         });
         ui.add_space(8.0);
+        self.llm_card(ui, &palette, actions);
+        ui.add_space(8.0);
+        self.agentic_card(ui, &palette);
+        ui.add_space(8.0);
         theme::card(ui, &palette, None, &self.decor(), |ui| {
             ui.label(egui::RichText::new("Storage").strong());
             ui.label(format!("Home: {}", self.catalog.paths().home().display()));
@@ -1076,6 +1285,226 @@ impl MagpieApp {
                 )
                 .color(theme::dim_text(ui)),
             );
+        });
+    }
+
+    /// LLM provider, model picker, keys and test. The file is shared across
+    /// craft apps; discovery and the live test run on worker threads.
+    fn llm_card(&mut self, ui: &mut egui::Ui, palette: &SkinPalette, actions: &mut Vec<Act>) {
+        theme::card(ui, palette, Some(palette.accent), &self.decor(), |ui| {
+            ui.label(egui::RichText::new("LLM and chat").size(19.0).strong());
+            ui.label(
+                egui::RichText::new(
+                    "One provider for every craft app: this page reads and writes the shared file, \
+                     so the pick here is the pick everywhere. Local models stay on this machine; \
+                     a cloud provider sends catalogue excerpts with the chat.",
+                )
+                .color(theme::dim_text(ui)),
+            );
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Provider").strong());
+            ui.horizontal_wrapped(|ui| {
+                for provider in LlmProvider::ALL {
+                    let selected = self.llm.provider_enum() == provider;
+                    if ui
+                        .selectable_label(selected, provider.label())
+                        .on_hover_text(provider.id())
+                        .clicked()
+                    {
+                        actions.push(Act::LlmProvider(provider));
+                    }
+                }
+            });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("Model");
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.llm.model)
+                        .desired_width(240.0)
+                        .hint_text("pick below, or type a name"),
+                );
+                if response.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    && !self.llm.model.trim().is_empty()
+                {
+                    actions.push(Act::LlmUseModel(self.llm.model.trim().to_string()));
+                }
+                if ui
+                    .small_button(if self.llm_scanning {
+                        "Scanning..."
+                    } else {
+                        "Discover"
+                    })
+                    .clicked()
+                {
+                    actions.push(Act::LlmDiscover);
+                }
+            });
+            if !self.llm_models.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    for found in self.llm_models.clone() {
+                        let mut label = found.name.clone();
+                        if let Some(gb) = found.size_gb {
+                            label.push_str(&format!(" ({gb:.1} GB)"));
+                        }
+                        if found.resident {
+                            label.push_str(" [VRAM]");
+                        }
+                        if ui.small_button(label).clicked() {
+                            actions.push(Act::LlmUseModel(found.name.clone()));
+                        }
+                    }
+                });
+            } else if let Some(error) = self.llm_scan_error.clone() {
+                ui.label(egui::RichText::new(format!("discovery: {error}")).color(palette.accent));
+            }
+            ui.add_space(4.0);
+            let provider = self.llm.provider_enum();
+            if provider.local() {
+                ui.label(
+                    egui::RichText::new("Local provider: no key needed.")
+                        .size(12.0)
+                        .color(theme::dim_text(ui)),
+                );
+                if provider == LlmProvider::Ollama {
+                    ui.horizontal(|ui| {
+                        ui.label("Endpoint");
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.llm.ollama_endpoint)
+                                    .desired_width(260.0),
+                            )
+                            .lost_focus()
+                        {
+                            actions.push(Act::LlmSave);
+                        }
+                    });
+                }
+                if provider == LlmProvider::LmStudio {
+                    ui.horizontal(|ui| {
+                        ui.label("Endpoint");
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.llm.lmstudio_endpoint)
+                                    .desired_width(260.0),
+                            )
+                            .lost_focus()
+                        {
+                            actions.push(Act::LlmSave);
+                        }
+                    });
+                }
+            } else {
+                ui.label(egui::RichText::new("API key (BYOK)").strong());
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.llm_key_input)
+                            .password(true)
+                            .desired_width(260.0)
+                            .hint_text("empty every launch; empty keeps the stored one"),
+                    );
+                    if ui.small_button("Save key").clicked() {
+                        actions.push(Act::LlmSaveKey);
+                    }
+                    if ui.small_button("Forget").clicked() {
+                        actions.push(Act::LlmForgetKey);
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for (id, present) in self.llm.keys_present() {
+                        let text = if present {
+                            format!("{id}: SET")
+                        } else {
+                            format!("{id}: -")
+                        };
+                        ui.label(egui::RichText::new(text).size(12.0).color(if present {
+                            palette.accent
+                        } else {
+                            theme::dim_text(ui)
+                        }));
+                    }
+                });
+                if provider == LlmProvider::Custom {
+                    ui.horizontal(|ui| {
+                        ui.label("Endpoint");
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.llm.custom_endpoint)
+                                    .desired_width(260.0)
+                                    .hint_text("https://host:port"),
+                            )
+                            .lost_focus()
+                        {
+                            actions.push(Act::LlmSave);
+                        }
+                    });
+                }
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .small_button(if self.llm_testing {
+                        "Testing..."
+                    } else {
+                        "Test connection"
+                    })
+                    .clicked()
+                {
+                    actions.push(Act::LlmTest);
+                }
+                if let Some(out) = self.llm_test_out.clone() {
+                    ui.label(out);
+                }
+            });
+            ui.add_space(4.0);
+            let mut tools = self.llm.tools_enabled;
+            if ui
+                .checkbox(&mut tools, "Chat may call read-only tools")
+                .changed()
+            {
+                self.llm.tools_enabled = tools;
+                actions.push(Act::LlmSave);
+            }
+            let mut transcripts = self.llm.save_transcripts;
+            if ui
+                .checkbox(
+                    &mut transcripts,
+                    "Keep chat transcripts (per-day files, no keys)",
+                )
+                .changed()
+            {
+                self.llm.save_transcripts = transcripts;
+                actions.push(Act::LlmSave);
+            }
+            ui.horizontal(|ui| {
+                ui.label("Chat instructions");
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.llm.user_extra_prompt)
+                            .desired_width(320.0)
+                            .hint_text("optional extra instructions for the chat"),
+                    )
+                    .lost_focus()
+                {
+                    actions.push(Act::LlmSave);
+                }
+            });
+        });
+    }
+
+    /// How agents use this app without any LLM key: MCP over stdio.
+    fn agentic_card(&self, ui: &mut egui::Ui, palette: &SkinPalette) {
+        theme::card(ui, palette, None, &self.decor(), |ui| {
+            ui.label(egui::RichText::new("Agentic DE coop (MCP)").strong());
+            ui.label(
+                egui::RichText::new(
+                    "Agents in Antigravity, Claude or Cursor drive this app over MCP stdio: \
+                     tools, skills and the catalogue, no LLM key needed.",
+                )
+                .color(theme::dim_text(ui)),
+            );
+            ui.label("magpiecraft-mcp mcp");
+            ui.label(".\\start.ps1 -Mcp");
         });
     }
 
@@ -1599,6 +2028,7 @@ impl eframe::App for MagpieApp {
             self.set_zoom(ctx, next);
         }
         self.poll_scan();
+        self.poll_llm(ctx);
         self.handle_app_keys(ctx);
         self.covers.poll(ctx);
     }

@@ -192,10 +192,11 @@ pub fn tools() -> Value {
         ),
         tool(
             "magpie_llm_set_key",
-            "Store one provider key locally. The reply carries presence only, never the key. Empty keeps the stored value.",
+            "Store one provider key locally. The reply carries presence only, never the key. Empty keeps the stored value unless clear is true.",
             json!({
                 "provider": { "type": "string", "description": "cloud provider id" },
-                "api_key": { "type": "string", "description": "the key; empty means keep the stored one" }
+                "api_key": { "type": "string", "description": "the key; empty means keep the stored one" },
+                "clear": { "type": "boolean", "description": "forget the stored key" }
             }),
             &["provider"]
         ),
@@ -271,6 +272,7 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
             "set_key" => Ok(Command::LlmSetKey {
                 provider: req_str(args, "provider")?,
                 api_key: opt_str(args, "api_key").unwrap_or_default(),
+                clear: opt_bool(args, "clear").unwrap_or(false),
             }),
             "evict" => Ok(Command::LlmEvict {
                 keep: opt_str(args, "keep"),

@@ -1347,6 +1347,41 @@ pub fn test_completion(
     }))
 }
 
+/// Model list for the picker: live where an API exists, curated names where
+/// it does not. Never an error: failures come back as the second element so
+/// the UI shows them next to the picker instead of crashing it.
+pub fn discover_models(config: &LlmConfig) -> (Vec<DiscoveredModel>, Option<String>) {
+    let provider = config.provider_enum();
+    if !provider.has_list_api() {
+        let curated = match provider {
+            LlmProvider::Anthropic => ANTHROPIC_MODELS,
+            _ => GEMINI_MODELS,
+        };
+        return (
+            curated
+                .iter()
+                .map(|m| DiscoveredModel {
+                    name: m.to_string(),
+                    size_gb: None,
+                    resident: false,
+                })
+                .collect(),
+            None,
+        );
+    }
+    let result = match provider {
+        LlmProvider::Ollama => probe_ollama(config).map_err(|e| e.to_string()),
+        LlmProvider::LmStudio => {
+            probe_openai_models(&config.lmstudio_endpoint).map_err(|e| e.to_string())
+        }
+        _ => probe_openai_models(&config.endpoint()).map_err(|e| e.to_string()),
+    };
+    match result {
+        Ok(models) => (models, None),
+        Err(detail) => (Vec::new(), Some(detail)),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {

@@ -35,6 +35,7 @@ pub enum Command {
     LlmSetKey {
         provider: String,
         api_key: String,
+        clear: bool,
     },
     /// Evict resident Ollama models, optionally keeping one warm.
     LlmEvict {
@@ -416,7 +417,8 @@ fn llm_select(provider: &str, model: &str) -> MagpieResult<Value> {
 }
 
 /// Store one provider key locally. The reply carries presence, never the key.
-fn llm_set_key(provider: &str, api_key: &str) -> MagpieResult<Value> {
+/// `clear` forgets the stored key. Empty input without clear keeps storage.
+fn llm_set_key(provider: &str, api_key: &str, clear: bool) -> MagpieResult<Value> {
     use crate::llm::{load_config, save_config, LlmProvider};
     let selected = LlmProvider::parse(provider)
         .ok_or_else(|| MagpieError::invalid(format!("unknown provider: {provider}")))?;
@@ -437,7 +439,9 @@ fn llm_set_key(provider: &str, api_key: &str) -> MagpieResult<Value> {
         LlmProvider::Gemini => &mut config.gemini_key,
         _ => return Err(MagpieError::invalid("no key slot for a local provider")),
     };
-    if !api_key.trim().is_empty() {
+    if clear {
+        slot.clear();
+    } else if !api_key.trim().is_empty() {
         *slot = api_key.trim().to_string();
     }
     save_config(&config).map_err(MagpieError::llm)?;
@@ -512,7 +516,11 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
         Command::LlmStatus => llm_status(),
         Command::LlmListModels { provider } => llm_list_models(provider.as_deref()),
         Command::LlmSelect { provider, model } => llm_select(&provider, &model),
-        Command::LlmSetKey { provider, api_key } => llm_set_key(&provider, &api_key),
+        Command::LlmSetKey {
+            provider,
+            api_key,
+            clear,
+        } => llm_set_key(&provider, &api_key, clear),
         Command::LlmEvict { keep } => llm_evict(keep.as_deref()),
         Command::LlmTest { prompt } => llm_test(prompt.as_deref()),
         Command::Settings => to_value(catalog.settings().clone()),
@@ -728,6 +736,7 @@ mod tests {
             Command::LlmSetKey {
                 provider: "ollama".to_string(),
                 api_key: "k".to_string(),
+                clear: false,
             },
         );
         assert_eq!(local["ok"], json!(false));

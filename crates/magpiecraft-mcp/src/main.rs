@@ -354,6 +354,9 @@ enum LlmOp {
         provider: String,
         #[arg(long)]
         key: Option<String>,
+        /// Forget the stored key.
+        #[arg(long)]
+        clear: bool,
     },
     /// Evict resident Ollama models, optionally keeping one warm.
     Evict {
@@ -781,10 +784,15 @@ fn build(cmd: &Cmd, json_mode: bool) -> Result<(&'static str, Command), String> 
                 };
                 (c.id(), c)
             }
-            Some(LlmOp::SetKey { provider, key }) => {
+            Some(LlmOp::SetKey {
+                provider,
+                key,
+                clear,
+            }) => {
                 let c = Command::LlmSetKey {
                     provider: provider.clone(),
                     api_key: key.clone().unwrap_or_default(),
+                    clear: *clear,
                 };
                 (c.id(), c)
             }

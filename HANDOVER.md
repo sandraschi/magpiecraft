@@ -344,3 +344,35 @@ None. Two known limits are deliberate and documented rather than blockers:
 - MCP: resources/list + resources/read (unknown URI is -32002),
   magpie_skill_read tool, core allowlist cross-test. CLI: skills list, show,
   export --to --force. Help Skills tab and HELP.md render the real bundle.
+
+## 2026-11-26: standard shell, slice 4b - LLM core
+
+- magpiecraft-core::llm: 9-provider table with aliases, shared
+  ~/.craft/ai_config.json (one selection for every craft app), key resolution
+  file-then-env, presence flags only, send-time guard (empty model or missing
+  key refuses with a Settings pointer).
+- Discovery: live Ollama tags+residents, live OpenAI-compat /v1/models with
+  2s timeouts, curated lists for Anthropic and Gemini. Verified against
+  Sandra's real Ollama (her models list) and her real shared config.
+- Chat transport: sync curl, body and auth header through files, stream false,
+  think false, num_ctx 16384 on Ollama only, cancel kills the child. Every
+  failure is an error; empty replies never become invented text. Recorded-JSON
+  parse tests per provider family.
+
+## 2026-11-26: standard shell, slice 4c - LLM bus, MCP, CLI
+
+- Command::LlmStatus/ListModels/Select/SetKey/Evict/Test through dispatch;
+  select switches Ollama VRAM (evict+warm), set_key never echoes.
+- Six magpie_llm_* MCP tools mirroring the CLI `llm` verbs one to one.
+- Fleet lesson: past ~50 subcommands the debug CLI overflows the 1 MB main
+  stack at startup (clap parse frames, no user code runs). .cargo/config.toml
+  sets /STACK:8388608 for the Windows target. Release builds were unaffected.
+
+## 2026-11-26: standard shell, slice 4d - LLM settings card (part 1)
+
+- Settings has an LLM and chat card: nine provider selectables, model text
+  plus Discover with clickable size/VRAM badges, endpoint fields, BYOK with
+  presence dots and Forget, Test connection, tool/transcript toggles and chat
+  instructions. Discovery and test run on worker threads; the UI never waits.
+- Provider switches clear the model (no blind defaults). Agentic DE coop card
+  with the MCP stdio command. start.ps1 gains -Mcp.

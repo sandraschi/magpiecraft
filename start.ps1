@@ -7,7 +7,8 @@
 param(
     [switch]$Cli,
     [string]$DataHome,
-    [switch]$Smoke
+    [switch]$Smoke,
+    [switch]$Mcp
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,6 +57,11 @@ if ($Cli) {
 
 if ($Smoke) {
     & $appExe --smoke
+    exit $LASTEXITCODE
+}
+
+if ($Mcp) {
+    & $cliExe mcp
     exit $LASTEXITCODE
 }
 
