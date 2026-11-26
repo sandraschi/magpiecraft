@@ -8,6 +8,8 @@ MagpieCraft is part of the Storytold craft family and follows the fleet's Pure-R
 standard: an L1 engine crate, an L2 CLI + MCP binary and an L3 egui desktop app, all calling the same
 command bus in process.
 
+> **Operator Guide & Crate Docs:** See [`HELP.md`](HELP.md) and the 11 crate sub-READMEs (`crates/magpie-adapters`, `crates/magpiecraft-{core,comics,health,meta,scan,sources,store,tools,mcp,app}/README.md`).
+
 > **This project is not for piracy.** It contains no and will accept no features, advice or examples
 > for obtaining copyrighted works from unauthorised sources (piracy sites, torrent or Usenet
 > indexers, trackers, shadow libraries, scene sources), automating such downloads, breaking DRM, or
