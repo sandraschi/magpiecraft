@@ -305,3 +305,10 @@ None. Two known limits are deliberate and documented rather than blockers:
 - `start.ps1` now rebuilds when any `crates/**/*.rs` or `Cargo.toml` is newer than
   the staged exe. Staged exe refreshed by hand this time; verified end to end with
   `start.ps1 -Smoke` (0.9.0, 17 libraries, ok).
+
+## 2026-11-26: standard shell, slice 1 - libraries in Settings
+
+- Settings opens with a Libraries card: every indexed folder with kind, item
+  count, root path, per-library Scan, two-step Remove (confirm inline, index rows
+  only, files untouched) and Add library. `GoSettings` now refreshes so counts
+  are current. Verified by screenshot on the demo home.

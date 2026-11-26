@@ -57,6 +57,8 @@ enum Act {
     GoSettings,
     GoHelp,
     GoOrganise,
+    ScanLibrary(String),
+    RemoveLibrary(String),
     PlanRename,
     ApplyPlan(String),
     UndoJournal(String),
@@ -87,6 +89,9 @@ pub struct MagpieApp {
     scan_rx: Option<Receiver<String>>,
     focus_search_next: bool,
     organise: Option<OrganiseView>,
+    /// Library name armed for removal. The row shows Confirm/Keep instead of
+    /// removing on the first click.
+    remove_armed: Option<String>,
 }
 
 /// The Organise page: what is uncertain, what is planned, what was applied.
@@ -161,6 +166,7 @@ impl MagpieApp {
             scan_rx: None,
             focus_search_next: false,
             organise: None,
+            remove_armed: None,
             catalog,
         };
         app.refresh();
@@ -212,6 +218,25 @@ impl MagpieApp {
         self.page = Page::Reader;
     }
 
+    /// Removing a library drops its index rows only. The files on disk are
+    /// never touched; the engine requires the confirm flag for the same reason.
+    fn remove_library(&mut self, name: String) {
+        match self.catalog.remove_library(&name, true) {
+            Ok(value) => {
+                let dropped = value
+                    .get("items_dropped_from_index")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                self.status = format!(
+                    "removed library {name} ({dropped} index rows dropped, files untouched)"
+                );
+                self.remove_armed = None;
+                self.refresh();
+            }
+            Err(e) => self.status = format!("remove failed: {e}"),
+        }
+    }
+
     fn start_scan(&mut self, library: Option<String>, full: bool) {
         let paths = self.catalog.paths().clone();
         let (tx, rx) = channel::<String>();
@@ -252,6 +277,11 @@ impl MagpieApp {
                 Act::ScanAll => self.start_scan(None, false),
                 Act::ScanThis => self.start_scan(self.browse.browse.library.clone(), false),
                 Act::ScanFull => self.start_scan(None, true),
+                Act::ScanLibrary(name) => {
+                    self.remove_armed = None;
+                    self.start_scan(Some(name), false);
+                }
+                Act::RemoveLibrary(name) => self.remove_library(name),
                 Act::Skin(skin) => self.set_skin(skin),
                 Act::ZoomIn => self.set_zoom(ctx, self.zoom * 1.1),
                 Act::ZoomOut => self.set_zoom(ctx, self.zoom / 1.1),
@@ -345,7 +375,10 @@ impl MagpieApp {
                     }
                     Err(e) => self.status = format!("undo failed: {e}"),
                 },
-                Act::GoSettings => self.page = Page::Settings,
+                Act::GoSettings => {
+                    self.page = Page::Settings;
+                    self.refresh();
+                }
                 Act::GoHelp => self.page = Page::Help,
                 Act::Dialog(d) => self.dialog = d,
                 Act::Refresh => self.refresh(),
@@ -768,6 +801,86 @@ impl MagpieApp {
 
     fn settings_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
         let palette = self.palette();
+        theme::card(ui, &palette, Some(palette.accent), |ui| {
+            ui.label(egui::RichText::new("Libraries").size(19.0).strong());
+            ui.label(
+                egui::RichText::new(
+                    "Every folder this app indexes. Removing drops the index rows \
+                     only; your files are never touched. To point a library at a new \
+                     folder, remove it and add the new folder below.",
+                )
+                .color(theme::dim_text(ui)),
+            );
+            ui.add_space(4.0);
+            match self.catalog.libraries() {
+                Err(e) => {
+                    ui.label(egui::RichText::new(format!("libraries: {e}")).color(palette.accent));
+                }
+                Ok(libraries) => {
+                    if libraries.is_empty() {
+                        ui.label("No libraries yet. Add the first folder below.");
+                    }
+                    for lib in &libraries {
+                        let items = self
+                            .stats
+                            .as_ref()
+                            .and_then(|s| s.per_library.iter().find(|p| p.library_id == lib.id))
+                            .map(|p| p.items)
+                            .unwrap_or(0);
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(&lib.name).strong());
+                            ui.label(
+                                egui::RichText::new(lib.kind.as_str())
+                                    .size(12.0)
+                                    .color(theme::dim_text(ui)),
+                            );
+                            if lib.mature {
+                                ui.label(
+                                    egui::RichText::new("mature")
+                                        .size(12.0)
+                                        .color(palette.accent),
+                                );
+                            }
+                            ui.label(
+                                egui::RichText::new(format!("{items} items"))
+                                    .size(12.0)
+                                    .color(theme::dim_text(ui)),
+                            );
+                        });
+                        ui.label(
+                            egui::RichText::new(&lib.root)
+                                .size(12.0)
+                                .color(theme::dim_text(ui)),
+                        );
+                        ui.horizontal(|ui| {
+                            let armed = self.remove_armed.as_deref() == Some(lib.name.as_str());
+                            if armed {
+                                ui.label("Remove this library from the index?");
+                                if ui.small_button("Confirm remove").clicked() {
+                                    actions.push(Act::RemoveLibrary(lib.name.clone()));
+                                }
+                                if ui.small_button("Keep").clicked() {
+                                    self.remove_armed = None;
+                                }
+                            } else {
+                                if ui.small_button("Scan").clicked() {
+                                    actions.push(Act::ScanLibrary(lib.name.clone()));
+                                }
+                                if ui.small_button("Remove...").clicked() {
+                                    self.remove_armed = Some(lib.name.clone());
+                                }
+                            }
+                        });
+                    }
+                    ui.add_space(4.0);
+                    if ui.button("Add library...").clicked() {
+                        actions.push(Act::AddLibrary);
+                    }
+                }
+            }
+        });
+        ui.add_space(8.0);
         theme::card(ui, &palette, Some(palette.accent), |ui| {
             ui.label(egui::RichText::new("Settings").size(19.0).strong());
             ui.add_space(4.0);
