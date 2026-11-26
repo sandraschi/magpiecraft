@@ -438,6 +438,60 @@ impl Catalog {
             "bytes": std::fs::metadata(&written).map(|m| m.len()).unwrap_or(0),
         }))
     }
+
+    /// Generate an SRT sidecar with whisperx/whisper on your own machine.
+    /// Default output is `<stem>.<lang>.srt` beside the source (players
+    /// auto-load that name); pass `out` to choose. Refuses to overwrite.
+    /// No network besides the tool's own model handling, no cloud service.
+    pub fn subs_generate(
+        &self,
+        key: &str,
+        model: Option<&str>,
+        lang: Option<&str>,
+        out: Option<&str>,
+    ) -> MagpieResult<Value> {
+        let (lib, row) = self.resolve_item(key)?;
+        let source = crate::catalog::library_path(&lib, &row.rel);
+        if !source.is_file() {
+            return Err(MagpieError::not_found(format!(
+                "{} is not on disk",
+                source.display()
+            )));
+        }
+        let lang = lang.map(str::trim).filter(|l| !l.is_empty());
+        let target = match out.map(str::trim).filter(|o| !o.is_empty()) {
+            Some(explicit) => PathBuf::from(explicit),
+            None => {
+                let stem = source
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or_else(|| MagpieError::invalid("media has no file name".to_string()))?;
+                let name = match lang {
+                    Some(l) => format!("{stem}.{l}.srt"),
+                    None => format!("{stem}.srt"),
+                };
+                source.with_file_name(name)
+            }
+        };
+        if target.exists() {
+            return Err(MagpieError::invalid(format!(
+                "{} already exists, refusing to overwrite",
+                target.display()
+            )));
+        }
+        let (written, engine) =
+            magpiecraft_tools::transcribe(self.tools(), &source, model, lang, &target)?;
+        Ok(json!({
+            "ok": true,
+            "key": row.key(),
+            "from": source.display().to_string(),
+            "out": written.display().to_string(),
+            "engine": engine,
+            "model": model.unwrap_or("default"),
+            "lang": lang.unwrap_or("auto"),
+            "bytes": std::fs::metadata(&written).map(|m| m.len()).unwrap_or(0),
+        }))
+    }
 }
 
 /// The media file a subtitle sidecar belongs to, used by the app to offer "open the

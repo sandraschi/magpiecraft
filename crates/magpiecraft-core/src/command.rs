@@ -188,6 +188,13 @@ pub enum Command {
         subtitle_index: u32,
         out: String,
     },
+    /// Generate an SRT sidecar with whisperx/whisper on this machine.
+    SubsGenerate {
+        key: String,
+        model: Option<String>,
+        lang: Option<String>,
+        out: Option<String>,
+    },
     /// The ffmpeg preset catalogue.
     Presets,
     /// Build (but do not apply) a conversion plan for one item.
@@ -283,6 +290,7 @@ impl Command {
             Command::SubsShift { .. } => "subs.shift",
             Command::SubsConvert { .. } => "subs.convert",
             Command::SubsExtract { .. } => "subs.extract",
+            Command::SubsGenerate { .. } => "subs.generate",
             Command::Presets => "presets",
             Command::PlanConvert { .. } => "convert.plan",
             Command::PlanRename { .. } => "plan.rename",
@@ -584,6 +592,12 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
             subtitle_index,
             out,
         } => catalog.subs_extract(&key, subtitle_index, &out),
+        Command::SubsGenerate {
+            key,
+            model,
+            lang,
+            out,
+        } => catalog.subs_generate(&key, model.as_deref(), lang.as_deref(), out.as_deref()),
         Command::Presets => Ok(catalog.presets()),
         Command::PlanConvert { key, preset, out } => {
             catalog.plan_convert(&key, &preset, out.as_deref())
@@ -763,6 +777,32 @@ mod tests {
             Command::LlmSelect {
                 provider: "ollama".to_string(),
                 model: "  ".to_string(),
+            },
+        );
+        assert_eq!(empty["ok"], json!(false));
+    }
+
+    #[test]
+    fn subs_generate_refuses_unknown_keys_without_a_binary() {
+        let mut c = catalog();
+        // No library, no file, no whisper binary involved: resolution fails first.
+        let missing = dispatch(
+            &mut c,
+            Command::SubsGenerate {
+                key: "lib:9|nope.mkv".to_string(),
+                model: None,
+                lang: Some("en".to_string()),
+                out: None,
+            },
+        );
+        assert_eq!(missing["ok"], json!(false));
+        let empty = dispatch(
+            &mut c,
+            Command::SubsGenerate {
+                key: "".to_string(),
+                model: None,
+                lang: None,
+                out: None,
             },
         );
         assert_eq!(empty["ok"], json!(false));

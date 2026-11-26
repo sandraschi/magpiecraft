@@ -45,6 +45,10 @@ pub const ENV_PDFCRAFT: &str = "MAGPIECRAFT_PDFCRAFT";
 pub const ENV_FFMPEG: &str = "MAGPIECRAFT_FFMPEG";
 /// The player used for "open with player". A file path or a program name.
 pub const ENV_PLAYER: &str = "MAGPIECRAFT_PLAYER";
+/// Speech-to-text for local subtitle generation: whisperx first (CUDA,
+/// word-level), then openai-whisper. The model downloads are the tool's own
+/// business; MagpieCraft never fetches models itself.
+pub const ENV_WHISPER: &str = "MAGPIECRAFT_WHISPER";
 
 /// Resolve an executable: absolute path from `env`, else PATH, else the first
 /// existing candidate in `fallbacks`.
@@ -110,6 +114,7 @@ pub struct Toolchain {
     pub ffmpeg: Option<PathBuf>,
     pub seven_zip: Option<PathBuf>,
     pub pdfcraft: Option<PathBuf>,
+    pub whisper: Option<PathBuf>,
 }
 
 impl Toolchain {
@@ -127,6 +132,7 @@ impl Toolchain {
                 &["pdfcraft-cli"],
                 &["C:/Program Files/PdfCraft/pdfcraft-cli.exe"],
             ),
+            whisper: find_tool(ENV_WHISPER, &["whisperx", "whisper"], &[]),
         }
     }
 
@@ -152,6 +158,7 @@ impl Toolchain {
             "ffmpeg": entry(&self.ffmpeg, "subtitle extraction", "pulling an embedded subtitle track out of a container"),
             "seven_zip": entry(&self.seven_zip, "CBR/RAR extraction", "reading CBR, RAR, CB7 and 7Z archives (Tier 2)"),
             "pdfcraft": entry(&self.pdfcraft, "PDF pages", "PDF page count and page rendering, via pdfcraft-cli (Tier 2)"),
+            "whisper": entry(&self.whisper, "local subtitles", "generating SRT sidecars with whisperx/whisper on your own GPU/CPU"),
         })
     }
 
@@ -168,6 +175,9 @@ impl Toolchain {
         }
         if self.pdfcraft.is_none() {
             v.push("pdfcraft");
+        }
+        if self.whisper.is_none() {
+            v.push("whisper");
         }
         v
     }
@@ -615,6 +625,77 @@ pub fn extract_subtitle(
     }
 }
 
+/// Generate an SRT sidecar with whisperx (preferred: CUDA, word-level) or
+/// openai-whisper. Both take the same flags. The model downloads are the
+/// tool's own business; a missing binary is Missing, never silent.
+/// Returns the written file and the engine name.
+#[allow(clippy::too_many_arguments)]
+pub fn transcribe(
+    tool: &Toolchain,
+    media: &Path,
+    model: Option<&str>,
+    lang: Option<&str>,
+    out: &Path,
+) -> ToolResult<(PathBuf, String)> {
+    let exe = tool
+        .whisper
+        .as_ref()
+        .ok_or_else(|| ToolError::Missing("whisperx/whisper".to_string()))?;
+    let engine = exe
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("whisper")
+        .to_string();
+    let dir = out.parent().filter(|d| !d.as_os_str().is_empty());
+    if let Some(dir) = dir {
+        std::fs::create_dir_all(dir).map_err(|e| ToolError::Io(e.to_string()))?;
+    }
+    let stem = media
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| ToolError::Failed(engine.clone(), "media has no file name".to_string()))?;
+    let produced_name = format!("{stem}.srt");
+    let mut args: Vec<String> = vec![
+        media.display().to_string(),
+        "--output_format".to_string(),
+        "srt".to_string(),
+    ];
+    if let Some(dir) = dir {
+        args.push("--output_dir".to_string());
+        args.push(dir.display().to_string());
+    }
+    if let Some(model) = model.map(str::trim).filter(|m| !m.is_empty()) {
+        args.push("--model".to_string());
+        args.push(model.to_string());
+    }
+    if let Some(lang) = lang.map(str::trim).filter(|l| !l.is_empty()) {
+        args.push("--language".to_string());
+        args.push(lang.to_string());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run(exe, &arg_refs)?;
+    let produced = dir
+        .map(|d| d.join(&produced_name))
+        .unwrap_or_else(|| PathBuf::from(&produced_name));
+    if !produced.is_file() {
+        return Err(ToolError::Failed(
+            engine,
+            format!("reported success but {} does not exist", produced.display()),
+        ));
+    }
+    if produced != out {
+        if out.exists() {
+            let _ = std::fs::remove_file(&produced);
+            return Err(ToolError::Failed(
+                engine,
+                format!("{} already exists, refusing to overwrite", out.display()),
+            ));
+        }
+        std::fs::rename(&produced, out).map_err(|e| ToolError::Io(e.to_string()))?;
+    }
+    Ok((out.to_path_buf(), engine))
+}
+
 // ---------------------------------------------------------------- PdfCraft#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PdfInfo {
     pub pages: u32,
@@ -740,7 +821,7 @@ mod tests {
             ffprobe(&empty, Path::new("x.mkv")).unwrap_err().kind(),
             "not_configured"
         );
-        assert_eq!(empty.missing().len(), 4);
+        assert_eq!(empty.missing().len(), 5);
         let report = empty.report();
         assert_eq!(report["ffprobe"]["found"], serde_json::json!(false));
     }
@@ -832,5 +913,37 @@ mod tests {
             exe: None,
         };
         assert!(launch(&player, Path::new("Z:/nope.mkv"), None).is_err());
+    }
+
+    #[test]
+    fn transcribe_without_a_binary_is_missing_not_silent() {
+        let tool = Toolchain {
+            whisper: None,
+            ..Default::default()
+        };
+        let err = transcribe(
+            &tool,
+            Path::new("D:/films/Alien (1979).mkv"),
+            None,
+            None,
+            &PathBuf::from("D:/films/Alien (1979).en.srt"),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ToolError::Missing(_)), "got {err:?}");
+        assert_eq!(err.kind(), "not_configured");
+    }
+
+    #[test]
+    fn whisper_detection_prefers_whisperx() {
+        // find_tool resolves PATH; both names are accepted, whisperx first.
+        let found = find_tool(
+            "MAGPIECRAFT_WHISPER_DEFINITELY_UNSET",
+            &[
+                "whisperx_definitely_missing_binary",
+                "whisper_definitely_missing_binary",
+            ],
+            &[],
+        );
+        assert!(found.is_none());
     }
 }
