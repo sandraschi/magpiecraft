@@ -1195,7 +1195,9 @@ impl MagpieApp {
         if !typing && (slash || ctrl_f) {
             self.focus_search_next = true;
         }
-        if escape && self.dialog != Dialog::None {
+        // Escape closes a dialog, but never while typing in one of its fields:
+        // abandoning the add-library form mid-path would silently lose input.
+        if escape && !typing && self.dialog != Dialog::None {
             self.dialog = Dialog::None;
         }
     }
