@@ -182,6 +182,16 @@ colours, card shadows, procedural backdrops and a reader progress bar.
 
 173 tests. Remaining: ffmpeg presets, SMART drive health, local subtitle generation.
 
+## Tier 3, later slices (2026-11-26)
+
+- SMART drive health (`drive.health`, `drives`): Windows Storage API probe, per-library drive mapping, warnings for unhealthy/high-wear/hot/erroring/full volumes.
+- Local subtitle generation (`subs.generate`): whisperx preferred, openai-whisper fallback, SRT sidecar beside the source; no model downloads, no cloud.
+- Drive proposal scan (`propose_libraries`): one library per level-2 folder of Multimedia Files on each media drive, pattern kind guess plus sample files; unknown kinds stay unknown for the AI pass or manual correction.
+- Chat dock, in-app LLM settings (provider/model/discovery/keys/test), and `magpie_llm_*` MCP tools.
+- LLM classifier override (2026-11-27): `Settings.llm.classify_provider/classify_model`, empty follows the chat pair. Wired through `magpie_llm_select --for classify`, the MCP `slot` param, and a Settings "Classification" section showing the effective pair with a "Follow chat" reset. `classify_folder_ai` asks the effective model for strict JSON `{kind, confidence, reason}`; `AI-classify unknowns` fills proposal rows in place (user overrides win, 50/folder cap per run, cancel supported).
+
+221 tests, clippy clean, fmt clean. Verified: CLI `llm use --for classify` + `llm status` round-trip (temp home for the write path), full workspace suite, screenshot of the Settings LLM card with Classification section.
+
 ## Next step
 
 1. The remaining A2 work, in this order: identify from metadata (local dumps first: GCD, MangaBaka,
