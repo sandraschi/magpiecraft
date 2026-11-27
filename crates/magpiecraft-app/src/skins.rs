@@ -1,9 +1,11 @@
 //! Skins: curated palettes, card decor and backdrops.
 //!
-//! djcraft ships nine studio skins; MagpieCraft ships three that fit a collector:
-//! ink for the night reader, paper for daylight, neon for the shelf at midnight.
-//! A skin owns every colour the app paints, so switching skins can never leave a
-//! hard-coded grey on white behind. The contrast test below locks that in.
+//! djcraft ships nine studio skins; MagpieCraft ships seven that fit a collector:
+//! ink for the night reader, paper for daylight, neon for the shelf at midnight,
+//! forest, sepia and midnight for the stacks, and Baroque Velvet and gold as the
+//! sandraschi trade dress. A skin owns every colour the app paints, so switching
+//! skins can never leave a hard-coded grey on white behind. The contrast test
+//! below locks that in.
 
 use egui::Color32;
 use magpiecraft_core::MediaKind;
@@ -14,6 +16,8 @@ use magpiecraft_core::MediaKind;
 pub enum CardDecorStyle {
     DropShadow,
     NeonGlow,
+    /// Baroque double frame: shadow plus an inner gold rule.
+    DoubleFrame,
 }
 
 /// What is painted behind the content. All procedural, all cheap: a few dozen
@@ -25,11 +29,15 @@ pub enum BackdropStyle {
     Weave,
     /// A sparse field of dots, like dust in a projector beam.
     Dots,
+    /// Gilded diamond trellis with rosette dots, the Baroque ceiling.
+    Damask,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SkinId {
+    /// Velvet and gold, the sandraschi trade dress. The default for new setups.
     #[default]
+    BaroqueVelvet,
     MagpieInk,
     PaperLibrary,
     NeonShelf,
@@ -39,7 +47,8 @@ pub enum SkinId {
 }
 
 impl SkinId {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
+        Self::BaroqueVelvet,
         Self::MagpieInk,
         Self::PaperLibrary,
         Self::NeonShelf,
@@ -50,6 +59,7 @@ impl SkinId {
 
     pub fn id(self) -> &'static str {
         match self {
+            SkinId::BaroqueVelvet => "baroque-velvet",
             SkinId::MagpieInk => "magpie-ink",
             SkinId::PaperLibrary => "paper-library",
             SkinId::NeonShelf => "neon-shelf",
@@ -61,6 +71,7 @@ impl SkinId {
 
     pub fn label(self) -> &'static str {
         match self {
+            SkinId::BaroqueVelvet => "Baroque Velvet",
             SkinId::MagpieInk => "Magpie Ink",
             SkinId::PaperLibrary => "Paper Library",
             SkinId::NeonShelf => "Neon Shelf",
@@ -72,6 +83,7 @@ impl SkinId {
 
     pub fn blurb(self) -> &'static str {
         match self {
+            SkinId::BaroqueVelvet => "Velvet and gold, the sandraschi trade dress",
             SkinId::MagpieInk => "High-contrast dark, the night reader",
             SkinId::PaperLibrary => "Warm paper light, for daylight cataloguing",
             SkinId::NeonShelf => "Black glass with neon, the shelf at midnight",
@@ -83,6 +95,7 @@ impl SkinId {
 
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
+            "baroque-velvet" | "baroque" | "velvet" => Some(SkinId::BaroqueVelvet),
             "magpie-ink" | "ink" | "dark" => Some(SkinId::MagpieInk),
             "paper-library" | "paper" | "light" => Some(SkinId::PaperLibrary),
             "neon-shelf" | "neon" => Some(SkinId::NeonShelf),
@@ -95,6 +108,26 @@ impl SkinId {
 
     pub fn palette(self) -> SkinPalette {
         match self {
+            SkinId::BaroqueVelvet => SkinPalette {
+                is_light: false,
+                canvas: Color32::from_rgb(18, 10, 15),
+                card: Color32::from_rgb(38, 20, 29),
+                border: Color32::from_rgb(190, 150, 60),
+                text: Color32::from_rgb(252, 246, 232),
+                text_dim: Color32::from_rgb(220, 202, 170),
+                accent: Color32::from_rgb(212, 175, 55),
+                accent_dim: Color32::from_rgb(150, 120, 45),
+                kind_comics: Color32::from_rgb(255, 138, 61),
+                kind_manga: Color32::from_rgb(240, 85, 155),
+                kind_magazines: Color32::from_rgb(62, 198, 184),
+                kind_video: Color32::from_rgb(110, 173, 255),
+                kind_audio: Color32::from_rgb(74, 222, 128),
+                kind_ebook: Color32::from_rgb(240, 200, 80),
+                kind_photo: Color32::from_rgb(183, 148, 255),
+                kind_other: Color32::from_rgb(152, 162, 184),
+                decor: CardDecorStyle::DoubleFrame,
+                backdrop: BackdropStyle::Damask,
+            },
             SkinId::MagpieInk => SkinPalette {
                 is_light: false,
                 canvas: Color32::from_rgb(10, 13, 18),

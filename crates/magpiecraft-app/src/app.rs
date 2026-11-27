@@ -19,6 +19,7 @@ use std::sync::mpsc::{channel, Receiver};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
+    Dashboard,
     Browse,
     Reader,
     Organise,
@@ -102,6 +103,7 @@ enum Act {
     Offset(i32),
     SaveSettings,
     GoLibraries,
+    GoDashboard,
     GoBack,
     GoStats,
     GoSettings,
@@ -278,7 +280,7 @@ impl MagpieApp {
         cc.egui_ctx.set_zoom_factor(zoom);
         let mut app = MagpieApp {
             settings,
-            page: Page::Browse,
+            page: Page::Dashboard,
             browse: BrowseState {
                 browse: empty_browse(),
                 filter: String::new(),
@@ -340,12 +342,18 @@ impl MagpieApp {
             catalog,
         };
         app.refresh();
+        app.refresh_organise();
         app.drive_roots_text = app.settings.drive_roots.join("\n");
         match start_page.as_str() {
             "organise" => {
                 app.refresh_organise();
                 app.page = Page::Organise;
             }
+            "browse" => {
+                app.browse_key = None;
+                app.page = Page::Browse;
+            }
+            "dashboard" => {}
             "stats" => {
                 app.stats = app.catalog.stats().ok();
                 app.page = Page::Stats;
@@ -1104,6 +1112,11 @@ impl MagpieApp {
                     self.browse.search = None;
                     self.refresh();
                 }
+                Act::GoDashboard => {
+                    self.stats = self.catalog.stats().ok();
+                    self.refresh_organise();
+                    self.page = Page::Dashboard;
+                }
                 Act::GoBack => {
                     let mut key = self.browse_key.clone();
                     if let Some(current) = key.clone() {
@@ -1313,6 +1326,10 @@ impl MagpieApp {
                 }
             });
             ui.menu_button("Go", |ui| {
+                if ui.button("Dashboard").clicked() {
+                    actions.push(Act::GoDashboard);
+                    ui.close();
+                }
                 if ui.button("Libraries").clicked() {
                     actions.push(Act::GoLibraries);
                     ui.close();
@@ -1332,6 +1349,10 @@ impl MagpieApp {
                 }
             });
             ui.menu_button("Window", |ui| {
+                if ui.button("Dashboard").clicked() {
+                    actions.push(Act::GoDashboard);
+                    ui.close();
+                }
                 if ui.button("Browse").clicked() {
                     actions.push(Act::GoLibraries);
                     ui.close();
@@ -1461,6 +1482,7 @@ impl MagpieApp {
             ui.label(format!("{libraries} libraries  |  {items} items"));
             ui.separator();
             ui.label(match self.page {
+                Page::Dashboard => "Dashboard".to_string(),
                 Page::Browse => "Browse".to_string(),
                 Page::Reader => match self.reader.as_ref() {
                     Some(reader) => format!("Reader  p.{} / {}", reader.page(), reader.count()),
@@ -1760,7 +1782,7 @@ impl MagpieApp {
             ui.add_space(6.0);
             ui.label(egui::RichText::new("Skin").size(16.0).strong());
             ui.label(
-                egui::RichText::new("Six curated palettes. Everything repaints at once.")
+                egui::RichText::new("Seven curated palettes. Everything repaints at once.")
                     .color(theme::dim_text(ui)),
             );
             ui.add_space(2.0);
@@ -2587,6 +2609,198 @@ impl MagpieApp {
         });
     }
 
+    /// Best-effort one-line title for an organise entry of any shape.
+    fn card_title(value: &serde_json::Value) -> String {
+        for key in ["title", "name", "label", "key", "id", "path"] {
+            if let Some(text) = value.get(key).and_then(serde_json::Value::as_str) {
+                if !text.trim().is_empty() {
+                    return text.to_string();
+                }
+            }
+        }
+        "item".to_string()
+    }
+
+    /// Global overview: hero numbers, drives, the curation pipeline and warnings.
+    fn dashboard_page(&mut self, ui: &mut egui::Ui, palette: &SkinPalette, actions: &mut Vec<Act>) {
+        let stats = self.stats.clone().unwrap_or_default();
+        theme::card(ui, palette, Some(palette.accent), &self.decor(), |ui| {
+            ui.label(
+                egui::RichText::new("MagpieCraft at a glance")
+                    .size(19.0)
+                    .strong(),
+            );
+            ui.label(format!(
+                "{} libraries   |   {} items   |   {} pages",
+                stats.libraries, stats.items, stats.pages
+            ));
+            if !stats.per_kind.is_empty() {
+                let kinds: Vec<String> = stats
+                    .per_kind
+                    .iter()
+                    .map(|k| format!("{} {}", k.kind.as_str(), k.items))
+                    .collect();
+                ui.label(egui::RichText::new(kinds.join("   ")).color(theme::dim_text(ui)));
+            }
+            if stats.missing > 0 {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} items missing (unplugged drive or deleted file); kept so progress is not lost",
+                        stats.missing
+                    ))
+                    .color(palette.accent),
+                );
+            }
+        });
+        ui.add_space(8.0);
+
+        theme::card(ui, palette, None, &self.decor(), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Drives").size(16.0).strong());
+                if ui.small_button("Check drives").clicked() {
+                    actions.push(Act::CheckDrives);
+                }
+            });
+            if let Some(report) = self.drive_report.clone() {
+                let warnings = report
+                    .get("warnings")
+                    .and_then(serde_json::Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let drives = report
+                    .get("drives")
+                    .and_then(serde_json::Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let volumes = report
+                    .get("volumes")
+                    .and_then(serde_json::Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                for drive in &drives {
+                    let name = drive
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("?");
+                    let health = drive
+                        .get("health")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("?");
+                    let id = drive.get("id").and_then(|v| {
+                        v.as_str()
+                            .map(str::to_string)
+                            .or_else(|| v.as_u64().map(|n| n.to_string()))
+                    });
+                    let mut line = format!("{name}  {health}");
+                    if !health.eq_ignore_ascii_case("healthy") {
+                        line = format!("! {line}");
+                    }
+                    ui.label(if health.eq_ignore_ascii_case("healthy") {
+                        egui::RichText::new(line)
+                    } else {
+                        egui::RichText::new(line).strong().color(palette.accent)
+                    });
+                    for vol in volumes.iter().filter(|v| {
+                        id.as_ref().is_some_and(|d| {
+                            v.get("disk").and_then(|x| {
+                                x.as_str()
+                                    .map(str::to_string)
+                                    .or_else(|| x.as_u64().map(|n| n.to_string()))
+                            }) == Some(d.clone())
+                        })
+                    }) {
+                        let label = vol
+                            .get("label")
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .or_else(|| {
+                                vol.get("letter")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(|l| format!("drive {l}"))
+                            })
+                            .unwrap_or_else(|| "volume".to_string());
+                        let size = vol.get("size").and_then(serde_json::Value::as_u64);
+                        let free = vol.get("free").and_then(serde_json::Value::as_u64);
+                        if let (Some(size), Some(free)) = (size, free) {
+                            if size > 0 {
+                                let used = 1.0 - free as f32 / size as f32;
+                                let gb = 1024.0 * 1024.0 * 1024.0;
+                                ui.horizontal(|ui| {
+                                    ui.label(format!(
+                                        "{}  {:.1} GB free of {:.1} GB",
+                                        label,
+                                        free as f32 / gb,
+                                        size as f32 / gb
+                                    ));
+                                    ui.add(
+                                        egui::ProgressBar::new(used.clamp(0.0, 1.0))
+                                            .desired_width(120.0),
+                                    );
+                                });
+                            }
+                        } else {
+                            ui.label(label);
+                        }
+                    }
+                }
+                if warnings.is_empty() {
+                    ui.label("No drive warnings.");
+                } else {
+                    for w in warnings.iter().filter_map(serde_json::Value::as_str) {
+                        ui.label(egui::RichText::new(format!("! {w}")).color(palette.accent));
+                    }
+                }
+            } else {
+                ui.label(
+                    egui::RichText::new(
+                        "No live drive data yet. The check reads SMART counters and free space.",
+                    )
+                    .color(theme::dim_text(ui)),
+                );
+                if self.drive_busy {
+                    ui.label("Checking drives...");
+                }
+            }
+        });
+        ui.add_space(8.0);
+
+        let organise = self.organise.clone().unwrap_or_default();
+        theme::card(ui, palette, None, &self.decor(), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Curation pipeline").size(16.0).strong());
+                if ui.small_button("Open Organise").clicked() {
+                    actions.push(Act::GoOrganise);
+                }
+            });
+            ui.horizontal_top(|ui| {
+                for (title, items) in [
+                    ("To review", organise.review.as_slice()),
+                    ("Planned", organise.plans.as_slice()),
+                    ("Applied", organise.journals.as_slice()),
+                ] {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new(format!("{} ({})", title, items.len())));
+                        for item in items.iter().take(4) {
+                            ui.label(
+                                egui::RichText::new(format!("- {}", Self::card_title(item)))
+                                    .size(12.0),
+                            );
+                        }
+                        if items.len() > 4 {
+                            ui.label(
+                                egui::RichText::new(format!("+ {} more", items.len() - 4))
+                                    .size(12.0)
+                                    .color(theme::dim_text(ui)),
+                            );
+                        }
+                    });
+                    ui.add_space(12.0);
+                }
+            });
+        });
+    }
+
     fn stats_page(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
         let palette = self.palette();
         let stats = self.stats.clone().unwrap_or_default();
@@ -2852,7 +3066,10 @@ impl MagpieApp {
             palette,
             "In this window",
             &[
-                "Libraries page: folders, volumes, Continue reading, search with / or the search row.",
+                "Dashboard: the landing page. Global totals, drives with free-space bars, the curation pipeline, warnings.",
+                "Left sidebar (Ctrl+B): your drives and folder tree. Single click opens a folder and selects it.",
+                "Libraries page: folders, volumes, Continue reading, search with / or the search row. Single click selects, double-click or Enter opens.",
+                "Right rail: Chat and Inspector tabs (Ctrl+J, Ctrl+I). The inspector shows whatever is selected.",
                 "Reader: arrows, Space and Shift+Space turn pages. H half page, T two pages, R right to left, Home and End jump.",
                 "Organise: Review lists what is uncertain, Plans holds diffs to apply, Journals records what was applied.",
                 "Settings: libraries, media drives with AI-assisted proposals, reading preferences, skins, zoom, LLM provider and chat (plus a separate classifier pair that defaults to chat).",
@@ -3058,6 +3275,7 @@ impl MagpieApp {
                             ("Add library", Act::AddLibrary),
                             ("Scan all libraries", Act::ScanAll),
                             ("Full rescan", Act::ScanFull),
+                            ("Skin: Baroque Velvet", Act::Skin(SkinId::BaroqueVelvet)),
                             ("Skin: Magpie Ink", Act::Skin(SkinId::MagpieInk)),
                             ("Skin: Paper Library", Act::Skin(SkinId::PaperLibrary)),
                             ("Skin: Neon Shelf", Act::Skin(SkinId::NeonShelf)),
@@ -3066,6 +3284,7 @@ impl MagpieApp {
                             ("Skin: Midnight Archive", Act::Skin(SkinId::MidnightArchive)),
                             ("Statistics", Act::GoStats),
                             ("Organise", Act::GoOrganise),
+                            ("Dashboard", Act::GoDashboard),
                             ("Chat", Act::ToggleChat),
                             ("Inspector", Act::ToggleInspector),
                             ("Plan renames", Act::PlanRename),
@@ -3352,6 +3571,11 @@ impl eframe::App for MagpieApp {
                 ui.scope_builder(
                     egui::UiBuilder::new().max_rect(page_rect),
                     |ui| match self.page {
+                        Page::Dashboard => {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| self.dashboard_page(ui, &palette, &mut actions));
+                        }
                         Page::Browse => {
                             let selected = self.selection.as_ref().map(|s| s.key.as_str());
                             let nav = egui::ScrollArea::vertical()

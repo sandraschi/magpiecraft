@@ -137,8 +137,8 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 
 | Pillar | Status |
 |---|---|
-| C. Near duplicates, backup planner, SMART | Planned (Tier 3) |
-| D. Convert, subtitle generation, CD ripping, print scanning | Partial: subtitle sidecars listed, shifted and converted; the rest planned |
+| C. Near duplicates, backup planner, SMART | Implemented (Tier 3) |
+| D. Convert, subtitle generation (incl. local whisper), CD ripping, print scanning | Partial: sidecars listed/shifted/converted/extracted/generated locally; the rest planned |
 | E. Knowledge graph and federated sources | Planned (Tier 4; the source registry exists) |
 | F. Gaps, wishlist and the curated source guide | Planned (Tier 5) |
 
@@ -147,6 +147,10 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Feature | Status |
 |---|---|
 | egui library grid with covers, breadcrumbs, folder filter | Implemented |
+| Hideable left sidebar: drives and folder hierarchy, single click opens and selects | Implemented |
+| Single-click select with inspector, double-click/Enter opens | Implemented |
+| Right rail with Chat and Inspector tabs (Ctrl+J, Ctrl+I, closable) | Implemented |
+| Dashboard landing page: totals, per-drive usage, curation pipeline, warnings | Implemented |
 | Continue-reading row | Implemented |
 | Whole-collection search box | Implemented |
 | Reader: single page, spread with cover alone, half page, RTL, page jump, offset | Implemented |
@@ -154,10 +158,10 @@ Status is `Implemented`, `Partial` or `Planned`. Nothing is implied by omission.
 | Reader: prefetch and decode off the UI thread | Implemented |
 | Open with player: resume position, player discovery, continue row for films | Implemented |
 | Built-in decoder, subtitle rendering, transcoding, streaming server | Not built, by decision D8 |
-| Ctrl + wheel zoom; three curated skins (Magpie Ink, Paper Library, Neon Shelf) | Implemented |
+| Ctrl + wheel zoom; seven curated skins, Baroque Velvet trade dress by default | Implemented |
 | Per-kind accent colours, card shadows, procedural backdrops | Implemented |
 | CLI with `--json` | Implemented |
-| MCP stdio server: `media_catalog`, `media_search`, `media_read`, `media_health` | Implemented |
+| MCP stdio server with tool calls, skill resources, and a redacted LLM surface | Implemented |
 | OPDS server, static site export | Planned (Tier 2/3) |
 | Installer, .mcpb bundle, release assets | Planned (release tier) |
 

@@ -94,11 +94,12 @@ impl Paths {
     }
 }
 
-/// The look of the app. One id, six curated skins; the palettes themselves live
+/// The look of the app. One id, seven curated skins; the palettes themselves live
 /// in the app crate, but the id and its lightness live here so settings, the CLI
 /// and MCP all agree on what names are legal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkinId {
+    BaroqueVelvet,
     MagpieInk,
     PaperLibrary,
     NeonShelf,
@@ -108,7 +109,8 @@ pub enum SkinId {
 }
 
 impl SkinId {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
+        Self::BaroqueVelvet,
         Self::MagpieInk,
         Self::PaperLibrary,
         Self::NeonShelf,
@@ -119,6 +121,7 @@ impl SkinId {
 
     pub fn id(self) -> &'static str {
         match self {
+            SkinId::BaroqueVelvet => "baroque-velvet",
             SkinId::MagpieInk => "magpie-ink",
             SkinId::PaperLibrary => "paper-library",
             SkinId::NeonShelf => "neon-shelf",
@@ -130,6 +133,7 @@ impl SkinId {
 
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
+            "baroque-velvet" | "baroque" | "velvet" => Some(SkinId::BaroqueVelvet),
             "magpie-ink" | "ink" | "dark" => Some(SkinId::MagpieInk),
             "paper-library" | "paper" | "light" => Some(SkinId::PaperLibrary),
             "neon-shelf" | "neon" => Some(SkinId::NeonShelf),
@@ -145,7 +149,7 @@ impl SkinId {
     }
 
     pub fn fallback() -> Self {
-        SkinId::MagpieInk
+        SkinId::BaroqueVelvet
     }
 }
 
@@ -159,7 +163,9 @@ pub struct Settings {
     pub mature_visible: bool,
     /// `dark` or `light`. Kept in sync with the skin: setting a skin sets this.
     pub theme: String,
-    /// Which curated skin paints the app: `magpie-ink`, `paper-library` or `neon-shelf`.
+    /// Which curated skin paints the app: `baroque-velvet` (the default),
+    /// `magpie-ink`, `paper-library`, `neon-shelf`, `forest-stacks`,
+    /// `sepia-desk` or `midnight-archive`.
     pub skin: String,
     /// UI zoom factor, persisted so Ctrl+wheel survives a restart.
     pub zoom: f32,

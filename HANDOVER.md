@@ -440,3 +440,12 @@ None. Two known limits are deliberate and documented rather than blockers:
 - magpiecraft_drives::propose_libraries walks level-2 folders with kind guesses (prefix then contains rules) and 20 sample files; unknown stays unknown for the AI pass. Settings drive_roots + media_folder with sanitise, CLI and MCP surface, tests on recorded + live-built trees.
 - Settings Media drives card: editable roots, Save, Scan drives on a worker, per-row kind picker with Add, Add all known. Confirming builds real libraries via LibraryAdd.
 - Next: AI classification pass for unknowns (local model), left tree, right tabs, dashboard.
+
+## 2026-11-27: Baroque Velvet trade-dress skin (opencode)
+
+- Seventh skin: Baroque Velvet (velvet and gold, the sandraschi trade dress), now the default for new setups. Existing settings keep their stored skin; one click in Settings (or View > Skin, palette, `--skin baroque-velvet`, MCP `settings_set`) switches.
+- Full Baroque look: DoubleFrame card decor (shadow plus inner gold rule), Damask backdrop (gilded diamond trellis with rosette dots, static, respects the backdrop-amount slider, 0 paints solid). No animation loop, no new repaint cost.
+- Wired everywhere skins are enumerated: app Settings picker, View > Skin, command palette, `--skin` help, MCP `settings_set` description, core `config::SkinId` (parse, id, fallback). Core `fallback()` is Baroque Velvet, so fresh settings and resets land on the trade dress.
+- Contrast locked by the existing tests, now covering all seven skins: primary 7:1, secondary 4.5:1 on canvas and card, kind accents distinct and usable on the velvet card.
+- Verified: `just ci` green (fmt, clippy `-D warnings`, 221 workspace tests), `--smoke` ok on a temp home, MCP probe (initialize, tools/list showing baroque-velvet, settings_set skin round-trip ok in temp home).
+- Note: the tree also holds today's unrelated Dashboard WIP in app.rs/main.rs (uncommitted when this session started). Left untouched; this commit only adds the skin.

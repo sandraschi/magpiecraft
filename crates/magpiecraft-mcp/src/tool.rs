@@ -59,7 +59,7 @@ pub fn tools() -> Value {
                 "mature_visible": { "type": "boolean", "description": "settings_set: show mature libraries" },
                 "imgdir_min_pages": { "type": "integer", "description": "settings_set: images needed for a page folder to be a volume" },
                 "theme": { "type": "string", "description": "settings_set: legacy, maps dark/light to the default skin of that mode" },
-                "skin": { "type": "string", "description": "settings_set: magpie-ink, paper-library, neon-shelf, forest-stacks, sepia-desk or midnight-archive (wins over theme)" },
+                "skin": { "type": "string", "description": "settings_set: baroque-velvet, magpie-ink, paper-library, neon-shelf, forest-stacks, sepia-desk or midnight-archive (wins over theme)" },
                 "zoom": { "type": "number", "description": "settings_set: UI zoom 0.6 to 2.5" },
                 "drive_roots": { "type": "array", "items": {"type": "string"}, "description": "settings_set: drive roots holding a media folder each" },
                 "media_folder": { "type": "string", "description": "settings_set: level-1 folder name on every media drive" }

@@ -6,7 +6,7 @@
 //! box. Icons are painted as vector shapes or written in ASCII.
 
 use crate::skins::{BackdropStyle, CardDecorStyle, SkinPalette};
-use egui::{Color32, CornerRadius, FontId, Shadow, Stroke, TextStyle};
+use egui::{Color32, CornerRadius, FontId, Shadow, Stroke, StrokeKind, TextStyle};
 
 /// User-tuned decor on top of a skin. Stored in Settings, so it survives a
 /// restart and a skin switch; the skin stays the curated base.
@@ -126,8 +126,19 @@ pub fn card(
                 if palette.is_light { 85 } else { 140 },
             ),
         },
+        CardDecorStyle::DoubleFrame => Shadow {
+            offset: [2, 3],
+            blur: 10,
+            spread: 1,
+            color: Color32::from_rgba_unmultiplied(
+                0,
+                0,
+                0,
+                if palette.is_light { 70 } else { 150 },
+            ),
+        },
     };
-    egui::Frame::NONE
+    let response = egui::Frame::NONE
         .fill(palette.card)
         .stroke(Stroke::new(decor.border_width, palette.border))
         .corner_radius(corner)
@@ -144,6 +155,15 @@ pub fn card(
             }
             add(ui);
         });
+    // The Baroque inner gold rule, painted inside the outer border.
+    if palette.decor == CardDecorStyle::DoubleFrame {
+        ui.painter().rect_stroke(
+            response.response.rect.shrink(4.0),
+            CornerRadius::same(5),
+            Stroke::new(1.0, palette.accent_dim),
+            StrokeKind::Inside,
+        );
+    }
 }
 
 /// Paint the skin backdrop over one rect. The caller passes the page area, never
@@ -190,7 +210,62 @@ pub fn paint_backdrop(ui: &egui::Ui, palette: &SkinPalette, rect: egui::Rect, de
                 row += 1;
             }
         }
+        BackdropStyle::Damask => {
+            // Gilded diamond trellis with rosette dots, the Baroque ceiling.
+            // Two diagonal line families form the lattice; dots on a wide grid
+            // are the medallions. Static, a few hundred shapes at most.
+            let lattice = damask_line(amount);
+            let step = 44.0;
+            let mut x = rect.left() - rect.height();
+            while x < rect.right() {
+                painter.line_segment(
+                    [
+                        egui::pos2(x, rect.bottom()),
+                        egui::pos2(x + rect.height(), rect.top()),
+                    ],
+                    egui::Stroke::new(1.0, lattice),
+                );
+                x += step;
+            }
+            let mut x2 = rect.left();
+            while x2 < rect.right() + rect.height() {
+                painter.line_segment(
+                    [
+                        egui::pos2(x2, rect.top()),
+                        egui::pos2(x2 - rect.height(), rect.bottom()),
+                    ],
+                    egui::Stroke::new(1.0, lattice),
+                );
+                x2 += step;
+            }
+            let rosette = Color32::from_rgba_unmultiplied(
+                palette.accent_dim.r(),
+                palette.accent_dim.g(),
+                palette.accent_dim.b(),
+                damask_alpha(90.0, amount),
+            );
+            let (dx, dy) = (88.0, 76.0);
+            let mut row = 0;
+            let mut y = rect.top() + dy / 2.0;
+            while y < rect.bottom() {
+                let mut x = rect.left() + dx / 2.0 + if row % 2 == 0 { 0.0 } else { dx / 2.0 };
+                while x < rect.right() {
+                    painter.circle_filled(egui::pos2(x, y), 2.2, rosette);
+                    x += dx;
+                }
+                y += dy;
+                row += 1;
+            }
+        }
     }
+}
+
+fn damask_alpha(base: f32, amount: f32) -> u8 {
+    ((base * amount).round() as i32).clamp(0, 255) as u8
+}
+
+fn damask_line(amount: f32) -> Color32 {
+    Color32::from_rgba_unmultiplied(190, 150, 60, damask_alpha(64.0, amount))
 }
 
 fn pattern_line(palette: &SkinPalette, amount: f32) -> Color32 {
