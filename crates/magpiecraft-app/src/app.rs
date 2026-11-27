@@ -8,7 +8,7 @@
 
 use crate::chat::{ChatDock, ChatLine};
 use crate::covers::CoverCache;
-use crate::library::{self, BrowseState, Nav};
+use crate::library::{self, BrowseState, Nav, Selection};
 use crate::reader::{Action, ReaderView};
 use crate::skins::{SkinId, SkinPalette};
 use crate::theme;
@@ -140,6 +140,9 @@ pub struct MagpieApp {
     page: Page,
     browse: BrowseState,
     browse_key: Option<String>,
+    /// Single-click selection shown in the inspector. Never opened
+    /// implicitly: only double-click, Enter or an Open button follows it.
+    selection: Option<Selection>,
     covers: CoverCache,
     reader: Option<ReaderView>,
     stats: Option<StatsView>,
@@ -258,6 +261,7 @@ impl MagpieApp {
                 continue_row: Vec::new(),
             },
             browse_key: start_key.clone(),
+            selection: None,
             covers: CoverCache::new(),
             reader: None,
             stats: None,
@@ -355,6 +359,53 @@ impl MagpieApp {
     fn open_reader(&mut self, key: String) {
         self.reader = Some(ReaderView::open(&mut self.catalog, &key));
         self.page = Page::Reader;
+    }
+
+    /// Follow one navigation action from the grid, the tree, the search
+    /// results or the Enter key. Selection never opens on its own; only this
+    /// path and double-click do.
+    fn follow_nav(&mut self, nav: Nav) {
+        match nav {
+            Nav::Open(key) => {
+                self.browse_key = key;
+                self.browse.search = None;
+                self.refresh();
+            }
+            Nav::Read(key) => self.open_reader(key),
+            Nav::Launch(key) => match self.catalog.open_item(&key) {
+                Ok(report) => {
+                    let player = report["player"].as_str().unwrap_or("player");
+                    let start = report["start_secs"].as_i64().unwrap_or(0);
+                    self.status = if start > 0 {
+                        format!(
+                            "opened in {player} at {}",
+                            magpiecraft_core::format_secs(u64::try_from(start).unwrap_or(0))
+                        )
+                    } else {
+                        format!("opened in {player}")
+                    };
+                    self.refresh();
+                }
+                Err(e) => self.status = format!("cannot open: {e}"),
+            },
+            Nav::Select(sel) => {
+                self.selection = Some(sel);
+            }
+            Nav::None => {}
+        }
+    }
+
+    /// Open whatever is currently selected (Enter key).
+    fn open_selected(&mut self) {
+        let nav = match self.selection.clone() {
+            Some(sel) => match sel.open {
+                library::SelOpen::Folder => Nav::Open(Some(sel.key)),
+                library::SelOpen::Read => Nav::Read(sel.key),
+                library::SelOpen::Launch => Nav::Launch(sel.key),
+            },
+            None => Nav::None,
+        };
+        self.follow_nav(nav);
     }
 
     /// Poll the LLM worker threads. Blocking provider calls run on spawned
@@ -1350,6 +1401,10 @@ impl MagpieApp {
             });
             ui.separator();
             ui.label(format!("zoom {:.0}%", self.zoom * 100.0));
+            if let Some(sel) = &self.selection {
+                ui.separator();
+                ui.label(format!("Selected: {}", sel.title));
+            }
             if self.scan_rx.is_some() {
                 ui.separator();
                 ui.label(egui::RichText::new("scanning...").color(palette.accent));
@@ -2911,7 +2966,7 @@ impl MagpieApp {
     fn handle_app_keys(&mut self, ctx: &egui::Context) {
         // A text field holds keyboard focus: global shortcuts stay out of the way.
         let typing = ctx.egui_wants_keyboard_input();
-        let (slash, escape, ctrl_f, ctrl_j, zoomin, zoomout, zero) = ctx.input(|i| {
+        let (slash, escape, ctrl_f, ctrl_j, zoomin, zoomout, zero, enter) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Slash),
                 i.key_pressed(egui::Key::Escape),
@@ -2920,6 +2975,7 @@ impl MagpieApp {
                 i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals),
                 i.key_pressed(egui::Key::Minus),
                 i.key_pressed(egui::Key::Num0),
+                i.key_pressed(egui::Key::Enter),
             )
         });
         let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
@@ -2937,6 +2993,11 @@ impl MagpieApp {
         }
         if !typing && ctrl_j {
             self.chat.open = !self.chat.open;
+        }
+        // Enter opens the current selection on the Browse page. Text fields
+        // keep Enter for themselves, guarded by `typing` above.
+        if !typing && enter && self.dialog == Dialog::None && matches!(self.page, Page::Browse) {
+            self.open_selected();
         }
         // Escape closes a dialog, but never while typing in one of its fields:
         // abandoning the add-library form mid-path would silently lose input.
@@ -3022,6 +3083,7 @@ impl eframe::App for MagpieApp {
                     egui::UiBuilder::new().max_rect(page_rect),
                     |ui| match self.page {
                         Page::Browse => {
+                            let selected = self.selection.as_ref().map(|s| s.key.as_str());
                             let nav = egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
@@ -3031,36 +3093,11 @@ impl eframe::App for MagpieApp {
                                         &mut self.covers,
                                         &mut self.catalog,
                                         &palette,
+                                        selected,
                                     )
                                 })
                                 .inner;
-                            match nav {
-                                Nav::Open(key) => {
-                                    self.browse_key = key;
-                                    self.browse.search = None;
-                                    self.refresh();
-                                }
-                                Nav::Read(key) => self.open_reader(key),
-                                Nav::Launch(key) => match self.catalog.open_item(&key) {
-                                    Ok(report) => {
-                                        let player = report["player"].as_str().unwrap_or("player");
-                                        let start = report["start_secs"].as_i64().unwrap_or(0);
-                                        self.status = if start > 0 {
-                                            format!(
-                                                "opened in {player} at {}",
-                                                magpiecraft_core::format_secs(
-                                                    u64::try_from(start).unwrap_or(0)
-                                                )
-                                            )
-                                        } else {
-                                            format!("opened in {player}")
-                                        };
-                                        self.refresh();
-                                    }
-                                    Err(e) => self.status = format!("cannot open: {e}"),
-                                },
-                                Nav::None => {}
-                            }
+                            self.follow_nav(nav);
                         }
                         Page::Reader => {
                             let mut back = false;

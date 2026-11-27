@@ -23,7 +23,28 @@ pub enum Nav {
     Read(String),
     /// Hand an item to the player or the OS handler (video, audio, book, photo).
     Launch(String),
+    /// Select a card without opening it. Single click selects; double-click
+    /// and Enter open. The inspector shows whatever is selected.
+    Select(Selection),
     None,
+}
+
+/// How a selection opens: decided where the kind is known so Enter and
+/// double-click behave exactly like the card's own open action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelOpen {
+    Folder,
+    Read,
+    Launch,
+}
+
+#[derive(Debug, Clone)]
+pub struct Selection {
+    pub open: SelOpen,
+    pub key: String,
+    pub title: String,
+    pub subtitle: String,
+    pub library: Option<String>,
 }
 
 pub struct BrowseState {
@@ -80,6 +101,7 @@ pub fn show(
     covers: &mut CoverCache,
     catalog: &mut Catalog,
     palette: &SkinPalette,
+    selected: Option<&str>,
 ) -> Nav {
     let mut nav = Nav::None;
     crumbs(ui, state, palette, &mut nav);
@@ -102,35 +124,59 @@ pub fn show(
     ui.add_space(6.0);
 
     if let Some(search) = state.search.clone() {
-        search_results(ui, &search, covers, catalog, palette, &mut nav);
+        search_results(ui, &search, covers, catalog, palette, selected, &mut nav);
         return nav;
     }
 
     if state.browse.crumbs.len() <= 1 && !state.continue_row.is_empty() {
         section(ui, palette, "Continue reading");
         let entries = state.continue_row.clone();
-        grid(ui, &entries, palette.accent, |ui, entry, width| {
-            let key = entry.get("key").and_then(Value::as_str).unwrap_or("");
-            let title = entry.get("title").and_then(Value::as_str).unwrap_or("");
-            let label_text = entry.get("label").and_then(Value::as_str).unwrap_or("");
-            let kind = entry.get("kind").and_then(Value::as_str).unwrap_or("other");
-            let comicish = matches!(kind, "comics" | "manga" | "magazines");
-            let face = if comicish {
-                CoverFace::Page(Some(palette.kind_color_by_name(kind)))
-            } else {
-                CoverFace::Label(kind)
-            };
-            cover(ui, width, key, covers, catalog, palette, face);
-            let label = format!("{title}  {label_text}");
-            let sub_kind = magpiecraft_core::MediaKind::parse(kind);
-            if card_label(ui, &label, kind, sub_kind, palette).clicked() {
-                nav = if comicish {
-                    Nav::Read(key.to_string())
+        grid(
+            ui,
+            &entries,
+            palette.accent,
+            selected,
+            |entry: &Value| entry.get("key").and_then(Value::as_str).unwrap_or(""),
+            |ui, entry, width| {
+                let key = entry.get("key").and_then(Value::as_str).unwrap_or("");
+                let title = entry.get("title").and_then(Value::as_str).unwrap_or("");
+                let label_text = entry.get("label").and_then(Value::as_str).unwrap_or("");
+                let kind = entry.get("kind").and_then(Value::as_str).unwrap_or("other");
+                let comicish = matches!(kind, "comics" | "manga" | "magazines");
+                let face = if comicish {
+                    CoverFace::Page(Some(palette.kind_color_by_name(kind)))
                 } else {
-                    Nav::Launch(key.to_string())
+                    CoverFace::Label(kind)
                 };
-            }
-        });
+                cover(ui, width, key, covers, catalog, palette, face);
+                let label = format!("{title}  {label_text}");
+                let sub_kind = magpiecraft_core::MediaKind::parse(kind);
+                let response = card_label(ui, &label, kind, sub_kind, palette);
+                let open = if comicish {
+                    SelOpen::Read
+                } else {
+                    SelOpen::Launch
+                };
+                if response.double_clicked() {
+                    nav = if comicish {
+                        Nav::Read(key.to_string())
+                    } else {
+                        Nav::Launch(key.to_string())
+                    };
+                } else if response.clicked() {
+                    nav = Nav::Select(Selection {
+                        open,
+                        key: key.to_string(),
+                        title: title.to_string(),
+                        subtitle: label_text.to_string(),
+                        library: entry
+                            .get("library")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                    });
+                }
+            },
+        );
         ui.add_space(10.0);
     }
 
@@ -147,29 +193,45 @@ pub fn show(
             palette,
             &format!("Folders ({})", state.browse.folders.len()),
         );
-        grid(ui, &visible, palette.accent, |ui, folder, width| {
-            match &folder.cover_key {
-                Some(cover_key) => cover(
-                    ui,
-                    width,
-                    cover_key,
-                    covers,
-                    catalog,
-                    palette,
-                    CoverFace::Page(None),
-                ),
-                None => placeholder(ui, width, palette),
-            }
-            let label = folder.name.clone();
-            let sub = if folder.items == 1 {
-                "1 volume".to_string()
-            } else {
-                format!("{} volumes", folder.items)
-            };
-            if card_label(ui, &label, &sub, None, palette).clicked() {
-                nav = Nav::Open(Some(folder.key.clone()));
-            }
-        });
+        grid(
+            ui,
+            &visible,
+            palette.accent,
+            selected,
+            |folder: &magpiecraft_core::FolderView| folder.key.as_str(),
+            |ui, folder, width| {
+                match &folder.cover_key {
+                    Some(cover_key) => cover(
+                        ui,
+                        width,
+                        cover_key,
+                        covers,
+                        catalog,
+                        palette,
+                        CoverFace::Page(None),
+                    ),
+                    None => placeholder(ui, width, palette),
+                }
+                let label = folder.name.clone();
+                let sub = if folder.items == 1 {
+                    "1 volume".to_string()
+                } else {
+                    format!("{} volumes", folder.items)
+                };
+                let response = card_label(ui, &label, &sub, None, palette);
+                if response.double_clicked() {
+                    nav = Nav::Open(Some(folder.key.clone()));
+                } else if response.clicked() {
+                    nav = Nav::Select(Selection {
+                        open: SelOpen::Folder,
+                        key: folder.key.clone(),
+                        title: folder.name.clone(),
+                        subtitle: sub,
+                        library: state.browse.library.clone(),
+                    });
+                }
+            },
+        );
     }
 
     if !state.browse.items.is_empty() {
@@ -185,45 +247,66 @@ pub fn show(
             palette,
             &items_heading(state.browse.kind, state.browse.items.len()),
         );
-        grid(ui, &visible, palette.accent, |ui, item, width| {
-            let comicish = matches!(
-                item.kind,
-                magpiecraft_core::MediaKind::Comics
-                    | magpiecraft_core::MediaKind::Manga
-                    | magpiecraft_core::MediaKind::Magazines
-            );
-            if comicish {
-                cover(
-                    ui,
-                    width,
-                    &item.key,
-                    covers,
-                    catalog,
-                    palette,
-                    CoverFace::Page(Some(palette.kind_color(item.kind))),
+        grid(
+            ui,
+            &visible,
+            palette.accent,
+            selected,
+            |item: &magpiecraft_core::ItemView| item.key.as_str(),
+            |ui, item, width| {
+                let comicish = matches!(
+                    item.kind,
+                    magpiecraft_core::MediaKind::Comics
+                        | magpiecraft_core::MediaKind::Manga
+                        | magpiecraft_core::MediaKind::Magazines
                 );
-            } else {
-                // A film or a book has no page to use as a cover, so the card
-                // says what it is instead of asking for an image that cannot exist.
-                cover(
-                    ui,
-                    width,
-                    &item.key,
-                    covers,
-                    catalog,
-                    palette,
-                    CoverFace::Label(item.kind.as_str()),
-                );
-            }
-            let sub = item_subtitle(item);
-            if card_label(ui, &item.title, &sub, Some(item.kind), palette).clicked() {
-                nav = if item.kind.is_comicish() {
-                    Nav::Read(item.key.clone())
+                if comicish {
+                    cover(
+                        ui,
+                        width,
+                        &item.key,
+                        covers,
+                        catalog,
+                        palette,
+                        CoverFace::Page(Some(palette.kind_color(item.kind))),
+                    );
                 } else {
-                    Nav::Launch(item.key.clone())
+                    // A film or a book has no page to use as a cover, so the card
+                    // says what it is instead of asking for an image that cannot exist.
+                    cover(
+                        ui,
+                        width,
+                        &item.key,
+                        covers,
+                        catalog,
+                        palette,
+                        CoverFace::Label(item.kind.as_str()),
+                    );
+                }
+                let sub = item_subtitle(item);
+                let response = card_label(ui, &item.title, &sub, Some(item.kind), palette);
+                let open = if item.kind.is_comicish() {
+                    SelOpen::Read
+                } else {
+                    SelOpen::Launch
                 };
-            }
-        });
+                if response.double_clicked() {
+                    nav = if item.kind.is_comicish() {
+                        Nav::Read(item.key.clone())
+                    } else {
+                        Nav::Launch(item.key.clone())
+                    };
+                } else if response.clicked() {
+                    nav = Nav::Select(Selection {
+                        open,
+                        key: item.key.clone(),
+                        title: item.title.clone(),
+                        subtitle: sub,
+                        library: Some(item.library.clone()),
+                    });
+                }
+            },
+        );
     }
 
     if state.browse.folders.is_empty() && state.browse.items.is_empty() {
@@ -356,6 +439,8 @@ fn grid<R>(
     ui: &mut egui::Ui,
     items: &[R],
     accent: egui::Color32,
+    selected: Option<&str>,
+    key_of: impl Fn(&R) -> &str,
     mut add_item: impl FnMut(&mut egui::Ui, &R, f32),
 ) {
     if items.is_empty() {
@@ -368,7 +453,9 @@ fn grid<R>(
     for row in items.chunks(columns.max(1)) {
         ui.horizontal(|ui| {
             for item in row {
-                with_card(ui, false, accent, |ui, width| add_item(ui, item, width));
+                with_card(ui, selected == Some(key_of(item)), accent, |ui, width| {
+                    add_item(ui, item, width)
+                });
             }
         });
         ui.add_space(8.0);
@@ -569,6 +656,7 @@ fn search_results(
     covers: &mut CoverCache,
     catalog: &mut Catalog,
     palette: &SkinPalette,
+    selected: Option<&str>,
     nav: &mut Nav,
 ) {
     section(
@@ -582,25 +670,41 @@ fn search_results(
             search.mode
         ),
     );
-    grid(ui, &search.hits, palette.accent, |ui, hit, width| {
-        cover(
-            ui,
-            width,
-            &hit.key,
-            covers,
-            catalog,
-            palette,
-            CoverFace::Page(None),
-        );
-        let library = if hit.where_.is_empty() {
-            hit.library.clone()
-        } else {
-            format!("{} / {}", hit.library, hit.where_)
-        };
-        if card_label(ui, &hit.title, &library, None, palette).clicked() {
-            *nav = Nav::Read(hit.key.clone());
-        }
-    });
+    grid(
+        ui,
+        &search.hits,
+        palette.accent,
+        selected,
+        |hit: &magpiecraft_core::SearchHit| hit.key.as_str(),
+        |ui, hit, width| {
+            cover(
+                ui,
+                width,
+                &hit.key,
+                covers,
+                catalog,
+                palette,
+                CoverFace::Page(None),
+            );
+            let library = if hit.where_.is_empty() {
+                hit.library.clone()
+            } else {
+                format!("{} / {}", hit.library, hit.where_)
+            };
+            let response = card_label(ui, &hit.title, &library, None, palette);
+            if response.double_clicked() {
+                *nav = Nav::Read(hit.key.clone());
+            } else if response.clicked() {
+                *nav = Nav::Select(Selection {
+                    open: SelOpen::Read,
+                    key: hit.key.clone(),
+                    title: hit.title.clone(),
+                    subtitle: library,
+                    library: Some(hit.library.clone()),
+                });
+            }
+        },
+    );
     if search.count == 0 {
         ui.label(
             egui::RichText::new("No matches. Try fewer words, or the substring mode.")
