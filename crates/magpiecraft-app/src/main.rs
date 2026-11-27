@@ -29,8 +29,8 @@ struct Cli {
     /// Start at one library or folder key.
     #[arg(long)]
     key: Option<String>,
-    /// Start on a page: browse, organise, stats, settings or help.
-    #[arg(long, default_value = "browse")]
+    /// Start on a page: dashboard, browse, organise, stats, settings or help.
+    #[arg(long, default_value = "dashboard")]
     page: String,
     /// Headless check: open the catalogue, browse, read one page list, exit.
     #[arg(long)]
