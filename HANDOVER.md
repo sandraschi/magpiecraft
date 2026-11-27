@@ -449,3 +449,11 @@ None. Two known limits are deliberate and documented rather than blockers:
 - Contrast locked by the existing tests, now covering all seven skins: primary 7:1, secondary 4.5:1 on canvas and card, kind accents distinct and usable on the velvet card.
 - Verified: `just ci` green (fmt, clippy `-D warnings`, 221 workspace tests), `--smoke` ok on a temp home, MCP probe (initialize, tools/list showing baroque-velvet, settings_set skin round-trip ok in temp home).
 - Note: the tree also held today's unrelated Dashboard WIP (app.rs page enum, GoDashboard, refresh_organise on start) uncommitted when this session started. File-level staging carried those hunks into the same commit; the main.rs default-page flip landed after the commit and is still uncommitted, with the screenshot. All Dashboard work belongs to that other thread, not this one.
+
+## 2026-11-27: drive shell S3+S4+S5 - sidebar, selection, right rail, dashboard (opencode)
+
+- Selection model (`Nav::Select`): single click selects any card/folder/hit, double-click or Enter opens via the existing open paths. Status bar shows the selection. No silent navigation.
+- S3 left sidebar: drive-grouped library tree (roots grouped by drive letter, `L:` etc.), lazy children per folder via catalogue browse, current-folder highlight, hideable via View menu and Ctrl+B. Stale kids cleared on refresh.
+- S4 right rail: Chat and Inspector tabs with a close button, Ctrl+J / Ctrl+I toggles. Inspector shows the selection (folder: totals + path; item: full catalogue record + Open button) with a cached row set. Help text updated (shortcuts dialog, Usage tab); command palette has Chat and Inspector entries.
+- S5 dashboard landing page (now the default page): hero totals + per-kind counts, drives card with usage bars and warnings plus a Check-drives button, curation pipeline kanban (To review / Planned / Applied with counts and top items linking to Organise). `--page` still selects any page; `browse` preserved as an explicit target.
+- Verified: fmt clean, clippy clean, 221 workspace tests green, release build, PrintWindow screenshots of the sidebar, the rail with tabs, and the dashboard landing (docs/screenshots/shell-sidebar.png, shell-rail.png, shell-dashboard.png).
