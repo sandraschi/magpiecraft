@@ -68,7 +68,6 @@ pub struct ChatTurn {
 
 /// The dock state. Lives on the app; rendered as a bounded right panel.
 pub struct ChatDock {
-    pub open: bool,
     pub maximized: bool,
     pub input: String,
     pub lines: Vec<ChatLine>,
@@ -83,7 +82,6 @@ pub struct ChatDock {
 impl ChatDock {
     pub fn new() -> Self {
         ChatDock {
-            open: false,
             maximized: false,
             input: String::new(),
             lines: Vec::new(),

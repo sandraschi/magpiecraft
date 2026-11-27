@@ -40,6 +40,8 @@ search), Reader (arrows, Space, H, T, R, Home, End), Organise (Review, Plans,
 Journals), Settings (libraries, media drives with AI-assisted proposals, reading
 preferences, skins, zoom, LLM provider and chat, plus a separate classifier
 pair that defaults to the chat pair), Statistics (totals plus per-library items, pages, bytes).
+Left sidebar: drive and folder tree (Ctrl+B to hide). Right rail: Chat and Inspector
+tabs (Ctrl+J, Ctrl+I). Single-click selects for the inspector; double-click or Enter opens.
 
 Command line (same engine, `--json` for scripts): `magpiecraft status`,
 `libraries`, `propose-libraries`, `scan`, `browse`, `search`, `stats`, `review`, `plan-rename`,
@@ -63,7 +65,9 @@ every `skill://` URI, `resources/read` returns the body.
   Plug the drive back and scan again.
 - Keyboard: arrows, Space, Shift+Space turn pages. H half page, T two pages,
   R right to left. Home and End jump. Escape goes back. `/` jumps to search.
-  Ctrl+J opens the chat dock. Ctrl plus mouse wheel zooms the window.
+  Enter opens the selected card or folder. Single click selects for the
+  inspector, double-click opens. Ctrl+J opens the chat tab, Ctrl+I the
+  inspector tab, Ctrl+B toggles the library sidebar. Ctrl plus mouse wheel zooms the window.
 
 ## Common pitfalls and safety
 

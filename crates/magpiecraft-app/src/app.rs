@@ -27,6 +27,13 @@ enum Page {
     Help,
 }
 
+/// Right-rail tab: chat or inspector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RightTab {
+    Chat,
+    Inspector,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Dialog {
     None,
@@ -113,6 +120,9 @@ enum Act {
     LlmClassifierProvider(LlmProvider),
     LlmClassifierClear,
     ToggleChat,
+    ToggleInspector,
+    HideRail,
+    OpenSelection,
     ChatSend,
     ChatClear,
     ChatPrompt,
@@ -149,6 +159,15 @@ pub struct MagpieApp {
     tree_kids: std::collections::HashMap<String, Vec<magpiecraft_core::FolderView>>,
     /// Libraries list for the tree, refreshed with everything else.
     libraries: Vec<magpiecraft_core::Library>,
+    /// Right rail visibility and tab. The rail shows chat or the inspector.
+    right_open: bool,
+    right_tab: RightTab,
+    /// Inspector cache, rebuilt when the selection changes.
+    inspect_key: Option<String>,
+    inspect_title: String,
+    inspect_sub: String,
+    inspect_kind: String,
+    inspect_rows: Vec<(String, String)>,
     covers: CoverCache,
     reader: Option<ReaderView>,
     stats: Option<StatsView>,
@@ -272,6 +291,13 @@ impl MagpieApp {
             tree_expanded: std::collections::HashMap::new(),
             tree_kids: std::collections::HashMap::new(),
             libraries: Vec::new(),
+            right_open: false,
+            right_tab: RightTab::Chat,
+            inspect_key: None,
+            inspect_title: String::new(),
+            inspect_sub: String::new(),
+            inspect_kind: String::new(),
+            inspect_rows: Vec::new(),
             covers: CoverCache::new(),
             reader: None,
             stats: None,
@@ -623,9 +649,9 @@ impl MagpieApp {
 
     /// Send the chat input on a worker thread. Never blocks the UI.
     fn send_chat(&mut self) {
-        if !self.chat.open {
-            self.chat.open = true;
-        }
+        // Sending always reveals the rail on the Chat tab.
+        self.right_open = true;
+        self.right_tab = RightTab::Chat;
         let status = self.chat_status();
         let selection = self.chat_selection();
         let paths = self.catalog.paths().clone();
@@ -1009,8 +1035,25 @@ impl MagpieApp {
                     self.persist_llm("Classifier follows the chat pair");
                 }
                 Act::ToggleChat => {
-                    self.chat.open = !self.chat.open;
+                    if self.right_open && self.right_tab == RightTab::Chat {
+                        self.right_open = false;
+                    } else {
+                        self.right_open = true;
+                        self.right_tab = RightTab::Chat;
+                    }
                 }
+                Act::ToggleInspector => {
+                    if self.right_open && self.right_tab == RightTab::Inspector {
+                        self.right_open = false;
+                    } else {
+                        self.right_open = true;
+                        self.right_tab = RightTab::Inspector;
+                    }
+                }
+                Act::HideRail => {
+                    self.right_open = false;
+                }
+                Act::OpenSelection => self.open_selected(),
                 Act::ChatSend => self.send_chat(),
                 Act::ChatClear => self.chat.clear(),
                 Act::ChatPrompt => {
@@ -1310,13 +1353,22 @@ impl MagpieApp {
                     ui.close();
                 }
                 ui.separator();
-                let chat_label = if self.chat.open {
+                let chat_label = if self.right_open && self.right_tab == RightTab::Chat {
                     "Close chat"
                 } else {
                     "Chat (Ctrl+J)"
                 };
                 if ui.button(chat_label).clicked() {
                     actions.push(Act::ToggleChat);
+                    ui.close();
+                }
+                let insp_label = if self.right_open && self.right_tab == RightTab::Inspector {
+                    "Close inspector"
+                } else {
+                    "Inspector (Ctrl+I)"
+                };
+                if ui.button(insp_label).clicked() {
+                    actions.push(Act::ToggleInspector);
                     ui.close();
                 }
             });
@@ -2049,6 +2101,135 @@ impl MagpieApp {
         });
     }
 
+    /// Rebuild the inspector cache when the selection changes. Folders show
+    /// counts from a fresh browse; items show the full catalogue record.
+    fn refresh_inspector(&mut self) {
+        let key = self.selection.as_ref().map(|s| s.key.clone());
+        if key == self.inspect_key {
+            return;
+        }
+        self.inspect_key = key.clone();
+        self.inspect_rows.clear();
+        self.inspect_title.clear();
+        self.inspect_sub.clear();
+        self.inspect_kind.clear();
+        let Some(sel) = self.selection.clone() else {
+            return;
+        };
+        self.inspect_title = sel.title;
+        self.inspect_sub = sel.subtitle;
+        match &sel.open {
+            library::SelOpen::Folder => {
+                self.inspect_kind = "Folder".to_string();
+                if let Ok(view) = self.catalog.browse(Some(&sel.key)) {
+                    self.inspect_rows.push((
+                        "Contents".to_string(),
+                        format!("{} folders, {} items", view.total_folders, view.total_items),
+                    ));
+                }
+                if let Some(lib) = &sel.library {
+                    self.inspect_rows.push(("Library".to_string(), lib.clone()));
+                }
+                let rel = sel.key.split_once('|').map(|(_, r)| r.to_string());
+                if let Some(rel) = rel {
+                    if !rel.is_empty() {
+                        self.inspect_rows.push(("Path".to_string(), rel));
+                    }
+                }
+            }
+            library::SelOpen::Read | library::SelOpen::Launch => {
+                match self.catalog.item(&sel.key) {
+                    Ok(item) => {
+                        self.inspect_kind = item.kind.as_str().to_string();
+                        self.inspect_rows
+                            .push(("Library".to_string(), item.library.clone()));
+                        self.inspect_rows
+                            .push(("Location".to_string(), item.rel.clone()));
+                        self.inspect_rows
+                            .push(("Size".to_string(), human_bytes(item.size)));
+                        if let Some(pages) = item.page_count {
+                            self.inspect_rows
+                                .push(("Pages".to_string(), pages.to_string()));
+                        }
+                        if let Some(series) = &item.series {
+                            if !series.is_empty() {
+                                self.inspect_rows
+                                    .push(("Series".to_string(), series.clone()));
+                            }
+                        }
+                        self.inspect_rows
+                            .push(("Container".to_string(), item.container.as_str().to_string()));
+                        self.inspect_rows.push((
+                            "Readable".to_string(),
+                            if item.readable {
+                                "yes".to_string()
+                            } else {
+                                "no (cover only)".to_string()
+                            },
+                        ));
+                    }
+                    Err(e) => {
+                        self.inspect_rows
+                            .push(("Lookup failed".to_string(), e.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The inspector tab: metadata for the single-click selection, plus an
+    /// Open button. Selecting never navigates; only this button, Enter or a
+    /// double-click opens.
+    fn show_inspector(
+        &mut self,
+        ui: &mut egui::Ui,
+        _rect: egui::Rect,
+        palette: &SkinPalette,
+        actions: &mut Vec<Act>,
+    ) {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+        egui::Frame::NONE
+            .fill(palette.card)
+            .stroke(egui::Stroke::new(1.0, palette.border))
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, |ui| {
+                if self.selection.is_none() {
+                    ui.label(egui::RichText::new("Inspector").size(19.0).strong());
+                    ui.label(
+                        egui::RichText::new(
+                            "Single-click any card or tree node to inspect it here. \
+                             Double-click or Enter opens it.",
+                        )
+                        .color(theme::dim_text(ui)),
+                    );
+                    return;
+                }
+                self.refresh_inspector();
+                ui.label(egui::RichText::new(self.inspect_kind.clone()).strong());
+                ui.label(egui::RichText::new(self.inspect_title.clone()).size(16.0));
+                if !self.inspect_sub.is_empty() {
+                    ui.label(
+                        egui::RichText::new(self.inspect_sub.clone()).color(theme::dim_text(ui)),
+                    );
+                }
+                ui.add_space(6.0);
+                egui::Grid::new("inspector_grid")
+                    .num_columns(2)
+                    .spacing([8.0, 4.0])
+                    .show(ui, |ui| {
+                        for (k, v) in self.inspect_rows.clone() {
+                            ui.label(egui::RichText::new(k).color(theme::dim_text(ui)));
+                            ui.label(v);
+                            ui.end_row();
+                        }
+                    });
+                ui.add_space(6.0);
+                if ui.button("Open").clicked() {
+                    actions.push(Act::OpenSelection);
+                }
+            });
+    }
+
     /// The chat dock: provider pill, context meter, messages, input bar.
     /// Bounded like the fleet guardrail: 280 to 480 wide, wrapping text,
     /// Send on the right of the input row.
@@ -2715,7 +2896,11 @@ impl MagpieApp {
                 "Home / End: first and last page",
                 "Escape: back to the library",
                 "/: jump to the search box",
-                "Ctrl+J: chat dock",
+                "Enter: open the selected card or folder",
+                "Single click: select (inspector shows it); double-click: open",
+                "Ctrl+J: chat tab of the right rail",
+                "Ctrl+I: inspector tab of the right rail",
+                "Ctrl+B: toggle the library sidebar",
                 "Ctrl + mouse wheel: zoom the whole window",
             ],
         );
@@ -2882,6 +3067,7 @@ impl MagpieApp {
                             ("Statistics", Act::GoStats),
                             ("Organise", Act::GoOrganise),
                             ("Chat", Act::ToggleChat),
+                            ("Inspector", Act::ToggleInspector),
                             ("Plan renames", Act::PlanRename),
                             ("Settings", Act::GoSettings),
                             ("Libraries", Act::GoLibraries),
@@ -2986,13 +3172,14 @@ impl MagpieApp {
     fn handle_app_keys(&mut self, ctx: &egui::Context) {
         // A text field holds keyboard focus: global shortcuts stay out of the way.
         let typing = ctx.egui_wants_keyboard_input();
-        let (slash, escape, ctrl_f, ctrl_j, ctrl_b, zoomin, zoomout, zero, enter) =
-            ctx.input(|i| {
+        let (slash, escape, ctrl_f, ctrl_j, ctrl_i, ctrl_b, zoomin, zoomout, zero, enter) = ctx
+            .input(|i| {
                 (
                     i.key_pressed(egui::Key::Slash),
                     i.key_pressed(egui::Key::Escape),
                     i.key_pressed(egui::Key::F) && (i.modifiers.ctrl || i.modifiers.command),
                     i.key_pressed(egui::Key::J) && (i.modifiers.ctrl || i.modifiers.command),
+                    i.key_pressed(egui::Key::I) && (i.modifiers.ctrl || i.modifiers.command),
                     i.key_pressed(egui::Key::B) && (i.modifiers.ctrl || i.modifiers.command),
                     i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals),
                     i.key_pressed(egui::Key::Minus),
@@ -3014,7 +3201,20 @@ impl MagpieApp {
             self.focus_search_next = true;
         }
         if !typing && ctrl_j {
-            self.chat.open = !self.chat.open;
+            if self.right_open && self.right_tab == RightTab::Chat {
+                self.right_open = false;
+            } else {
+                self.right_open = true;
+                self.right_tab = RightTab::Chat;
+            }
+        }
+        if !typing && ctrl_i {
+            if self.right_open && self.right_tab == RightTab::Inspector {
+                self.right_open = false;
+            } else {
+                self.right_open = true;
+                self.right_tab = RightTab::Inspector;
+            }
         }
         if !typing && ctrl_b {
             self.left_open = !self.left_open;
@@ -3092,8 +3292,11 @@ impl eframe::App for MagpieApp {
         ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
             let palette = self.palette();
             theme::paint_backdrop(ui, &palette, content, &self.decor());
-            if self.chat.open && self.chat.maximized {
-                self.show_chat(ui, content, &palette, &mut actions);
+            if self.right_open && self.chat.maximized {
+                match self.right_tab {
+                    RightTab::Chat => self.show_chat(ui, content, &palette, &mut actions),
+                    RightTab::Inspector => self.show_inspector(ui, content, &palette, &mut actions),
+                }
             } else {
                 let mut rest = content;
                 if self.left_open && content.width() > 800.0 {
@@ -3137,11 +3340,11 @@ impl eframe::App for MagpieApp {
                         content.right_bottom(),
                     );
                 }
-                let page_rect = if self.chat.open && rest.width() > 700.0 {
-                    let chat_w = 360.0f32.clamp(280.0, 480.0).min(rest.width() * 0.45);
+                let page_rect = if self.right_open && rest.width() > 700.0 {
+                    let rail_w = 360.0f32.clamp(280.0, 480.0).min(rest.width() * 0.45);
                     egui::Rect::from_min_max(
                         rest.min,
-                        egui::pos2(rest.right() - chat_w, rest.bottom()),
+                        egui::pos2(rest.right() - rail_w, rest.bottom()),
                     )
                 } else {
                     rest
@@ -3205,15 +3408,46 @@ impl eframe::App for MagpieApp {
                         }
                     },
                 );
-                if self.chat.open && !self.chat.maximized && rest.width() > 700.0 {
-                    let chat_w = 360.0f32.clamp(280.0, 480.0).min(rest.width() * 0.45);
-                    let chat_rect = egui::Rect::from_min_max(
-                        egui::pos2(rest.right() - chat_w, rest.top()),
+                if self.right_open && !self.chat.maximized && rest.width() > 700.0 {
+                    let rail_w = 360.0f32.clamp(280.0, 480.0).min(rest.width() * 0.45);
+                    let rail_rect = egui::Rect::from_min_max(
+                        egui::pos2(rest.right() - rail_w, rest.top()),
                         egui::pos2(rest.right(), rest.bottom()),
                     );
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(chat_rect), |ui| {
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(rail_rect), |ui| {
                         let palette = self.palette();
-                        self.show_chat(ui, chat_rect, &palette, &mut actions);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .selectable_label(self.right_tab == RightTab::Chat, "Chat")
+                                .clicked()
+                            {
+                                self.right_tab = RightTab::Chat;
+                            }
+                            if ui
+                                .selectable_label(
+                                    self.right_tab == RightTab::Inspector,
+                                    "Inspector",
+                                )
+                                .clicked()
+                            {
+                                self.right_tab = RightTab::Inspector;
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.small_button("X").clicked() {
+                                        actions.push(Act::HideRail);
+                                    }
+                                },
+                            );
+                        });
+                        ui.separator();
+                        match self.right_tab {
+                            RightTab::Chat => self.show_chat(ui, rail_rect, &palette, &mut actions),
+                            RightTab::Inspector => {
+                                self.show_inspector(ui, rail_rect, &palette, &mut actions)
+                            }
+                        }
                     });
                 }
             }
