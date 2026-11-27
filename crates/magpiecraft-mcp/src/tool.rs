@@ -191,10 +191,11 @@ pub fn tools() -> Value {
         ),
         tool(
             "magpie_llm_select",
-            "Persist the provider and model. For Ollama this also switches VRAM: other residents are evicted and the pick is warmed. Empty model is refused.",
+            "Persist the provider and model. For Ollama this also switches VRAM: other residents are evicted and the pick is warmed. Empty model is refused. Slot classify writes the classifier override instead of the chat pair.",
             json!({
                 "provider": { "type": "string", "description": "provider id" },
-                "model": { "type": "string", "description": "installed model name" }
+                "model": { "type": "string", "description": "installed model name" },
+                "slot": { "type": "string", "description": "chat (default) or classify" }
             }),
             &["provider", "model"]
         ),
@@ -276,6 +277,7 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
             "select" => Ok(Command::LlmSelect {
                 provider: req_str(args, "provider")?,
                 model: req_str(args, "model")?,
+                slot: opt_str(args, "slot"),
             }),
             "set_key" => Ok(Command::LlmSetKey {
                 provider: req_str(args, "provider")?,

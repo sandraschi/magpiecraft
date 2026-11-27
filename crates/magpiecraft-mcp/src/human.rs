@@ -791,7 +791,12 @@ pub fn print(command: &str, value: &Value) {
                 }
             }
         }
-        "llm.select" => println!("LLM is now {} {}", s(value, "provider"), s(value, "model")),
+        "llm.select" => println!(
+            "LLM {} is now {} {}",
+            value.get("slot").and_then(Value::as_str).unwrap_or("chat"),
+            s(value, "provider"),
+            s(value, "model")
+        ),
         "llm.set_key" => println!(
             "key for {}: {}",
             s(value, "provider"),

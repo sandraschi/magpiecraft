@@ -138,6 +138,9 @@ pub const GEMINI_MODELS: &[&str] = &["gemini-2.5-flash", "gemini-2.5-pro", "gemi
 pub struct LlmConfig {
     pub provider: String,
     pub model: String,
+    /// Classifier override for the drive proposal AI pass. Empty means chat.
+    pub classify_provider: String,
+    pub classify_model: String,
     pub ollama_endpoint: String,
     pub lmstudio_endpoint: String,
     pub custom_endpoint: String,
@@ -158,6 +161,8 @@ impl Default for LlmConfig {
         LlmConfig {
             provider: "ollama".to_string(),
             model: String::new(),
+            classify_provider: String::new(),
+            classify_model: String::new(),
             ollama_endpoint: "http://127.0.0.1:11434".to_string(),
             lmstudio_endpoint: "http://127.0.0.1:1234".to_string(),
             custom_endpoint: String::new(),
@@ -261,6 +266,19 @@ impl LlmConfig {
             });
         }
         Ok(())
+    }
+
+    /// Effective classifier: explicit override wins, otherwise the chat pair.
+    /// Empty model (here and there) refuses at send time, never invents one.
+    pub fn classifier(&self) -> (LlmProvider, String) {
+        let provider = LlmProvider::parse(self.classify_provider.trim())
+            .unwrap_or_else(|| self.provider_enum());
+        let model = if self.classify_model.trim().is_empty() {
+            self.model.trim().to_string()
+        } else {
+            self.classify_model.trim().to_string()
+        };
+        (provider, model)
     }
 }
 
@@ -1382,6 +1400,103 @@ pub fn discover_models(config: &LlmConfig) -> (Vec<DiscoveredModel>, Option<Stri
     }
 }
 
+/// Parse one model reply for the drive classifier. Never fails the scan:
+/// garbage becomes unknown at zero confidence with a note as the reason.
+fn parse_classification(text: &str) -> (String, f32, String) {
+    let trimmed = text.trim();
+    let unfenced = trimmed
+        .strip_prefix("```json")
+        .and_then(|s| s.strip_suffix("```"))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("```")
+                .and_then(|s| s.strip_suffix("```"))
+        })
+        .unwrap_or(trimmed)
+        .trim();
+    let start = unfenced.find("{").unwrap_or(0);
+    let end = unfenced.rfind("}").map(|i| i + 1).unwrap_or(unfenced.len());
+    let value: serde_json::Value =
+        serde_json::from_str(&unfenced[start..end]).unwrap_or(serde_json::Value::Null);
+    let kind_raw = value
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .trim()
+        .to_ascii_lowercase();
+    let known = [
+        "comics",
+        "manga",
+        "magazines",
+        "video",
+        "audio",
+        "ebook",
+        "photo",
+        "other",
+        "unknown",
+    ];
+    let kind = if known.contains(&kind_raw.as_str()) {
+        kind_raw
+    } else {
+        "unknown".to_string()
+    };
+    let confidence = value
+        .get("confidence")
+        .and_then(|v| v.as_f64())
+        .map(|c| ((c.clamp(0.0, 1.0) * 100.0).round() / 100.0) as f32)
+        .unwrap_or(0.0);
+    let reason = value
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("model gave no reason")
+        .to_string();
+    (kind, confidence, reason)
+}
+
+/// Classify one unknown level-2 folder with the effective classifier model
+/// (override or chat pair). Only read-only context goes in: the folder name
+/// plus sample file names. Transport errors propagate; unparseable model
+/// output degrades to unknown instead of failing the scan.
+pub fn classify_folder_ai(
+    config: &LlmConfig,
+    name: &str,
+    samples: &[String],
+    cancel: &Cancel,
+) -> Result<(String, f32, String), LlmError> {
+    let (provider, model) = config.classifier();
+    if model.trim().is_empty() {
+        return Err(LlmError::NoModel);
+    }
+    let mut effective = config.clone();
+    effective.provider = provider.id().to_string();
+    effective.model = model;
+    effective.send_ready()?;
+    let sample_list = samples
+        .iter()
+        .take(20)
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let prompt = format!("You catalogue a home media library. Folder name: {name}. Sample files: {sample_list}. Reply with strict JSON only, no prose: {{\"kind\": one of comics, manga, magazines, video, audio, ebook, photo, other, unknown, \"confidence\": 0.0 to 1.0, \"reason\": one short sentence}}.");
+    let req = ChatRequest {
+        messages: vec![ChatMessage::user(prompt)],
+        tools: Vec::new(),
+        max_tokens: 128,
+        num_ctx: None,
+    };
+    let outcome = chat(&effective, &req, cancel)?;
+    match outcome.reply {
+        ChatReply::Text(text) => Ok(parse_classification(&text)),
+        ChatReply::ToolCalls(_) => Ok((
+            "unknown".to_string(),
+            0.0,
+            "model called tools instead of answering".to_string(),
+        )),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
@@ -1393,6 +1508,61 @@ mod tests {
             model: model.to_string(),
             ..LlmConfig::default()
         }
+    }
+
+    #[test]
+    fn classifier_defaults_to_chat_pair() {
+        let config = cfg("ollama", "gemma3");
+        assert_eq!(
+            config.classifier(),
+            (LlmProvider::Ollama, "gemma3".to_string())
+        );
+        let mut over = config.clone();
+        over.classify_provider = "anthropic".to_string();
+        over.classify_model = "claude-sonnet-4-6".to_string();
+        assert_eq!(
+            over.classifier(),
+            (LlmProvider::Anthropic, "claude-sonnet-4-6".to_string())
+        );
+        let mut half = config.clone();
+        half.classify_model = "other-model".to_string();
+        assert_eq!(
+            half.classifier(),
+            (LlmProvider::Ollama, "other-model".to_string())
+        );
+        let mut bad = config.clone();
+        bad.classify_provider = "nope".to_string();
+        assert_eq!(
+            bad.classifier(),
+            (LlmProvider::Ollama, "gemma3".to_string())
+        );
+    }
+
+    #[test]
+    fn classification_parsing_never_fails_the_scan() {
+        assert_eq!(
+            parse_classification(
+                r#"{"kind": "video", "confidence": 0.8, "reason": "series in name"}"#
+            ),
+            ("video".to_string(), 0.8, "series in name".to_string())
+        );
+        assert_eq!(parse_classification("```json\n{\"kind\": \"manga\", \"confidence\": 0.95, \"reason\": \"nihongo\"}\n```"), ("manga".to_string(), 0.95, "nihongo".to_string()));
+        assert_eq!(
+            parse_classification(r#"{"kind": "spaceship", "confidence": 2.5}"#),
+            (
+                "unknown".to_string(),
+                1.0,
+                "model gave no reason".to_string()
+            )
+        );
+        assert_eq!(
+            parse_classification("not json at all"),
+            (
+                "unknown".to_string(),
+                0.0,
+                "model gave no reason".to_string()
+            )
+        );
     }
 
     #[test]

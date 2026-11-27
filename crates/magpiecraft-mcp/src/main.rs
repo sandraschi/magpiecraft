@@ -377,7 +377,14 @@ enum LlmOp {
         provider: Option<String>,
     },
     /// Persist the provider and model (switches Ollama VRAM to the pick).
-    Use { provider: String, model: String },
+    /// Use --for classify to write the classifier override instead.
+    Use {
+        provider: String,
+        model: String,
+        /// Slot to write: chat (default) or classify.
+        #[arg(long, value_name = "SLOT")]
+        r#for: Option<String>,
+    },
     /// Store one provider key locally. Empty keeps the stored value.
     SetKey {
         provider: String,
@@ -843,10 +850,15 @@ fn build(cmd: &Cmd, json_mode: bool) -> Result<(&'static str, Command), String> 
                 };
                 (c.id(), c)
             }
-            Some(LlmOp::Use { provider, model }) => {
+            Some(LlmOp::Use {
+                provider,
+                model,
+                r#for,
+            }) => {
                 let c = Command::LlmSelect {
                     provider: provider.clone(),
                     model: model.clone(),
+                    slot: r#for.clone(),
                 };
                 (c.id(), c)
             }
