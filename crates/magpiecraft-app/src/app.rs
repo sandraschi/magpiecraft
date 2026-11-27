@@ -143,6 +143,12 @@ pub struct MagpieApp {
     /// Single-click selection shown in the inspector. Never opened
     /// implicitly: only double-click, Enter or an Open button follows it.
     selection: Option<Selection>,
+    /// Hideable library tree on the left.
+    left_open: bool,
+    tree_expanded: std::collections::HashMap<String, bool>,
+    tree_kids: std::collections::HashMap<String, Vec<magpiecraft_core::FolderView>>,
+    /// Libraries list for the tree, refreshed with everything else.
+    libraries: Vec<magpiecraft_core::Library>,
     covers: CoverCache,
     reader: Option<ReaderView>,
     stats: Option<StatsView>,
@@ -262,6 +268,10 @@ impl MagpieApp {
             },
             browse_key: start_key.clone(),
             selection: None,
+            left_open: true,
+            tree_expanded: std::collections::HashMap::new(),
+            tree_kids: std::collections::HashMap::new(),
+            libraries: Vec::new(),
             covers: CoverCache::new(),
             reader: None,
             stats: None,
@@ -354,6 +364,8 @@ impl MagpieApp {
             self.status = e;
         }
         self.stats = self.catalog.stats().ok();
+        self.libraries = self.catalog.libraries().unwrap_or_default();
+        self.tree_kids.clear();
     }
 
     fn open_reader(&mut self, key: String) {
@@ -1193,6 +1205,14 @@ impl MagpieApp {
                 }
             });
             ui.menu_button("View", |ui| {
+                if ui
+                    .checkbox(&mut { self.left_open }, "Sidebar (Ctrl+B)")
+                    .changed()
+                {
+                    self.left_open = !self.left_open;
+                    ui.close();
+                }
+                ui.separator();
                 ui.menu_button("Skin", |ui| {
                     for skin in SkinId::ALL {
                         let mut checked = self.skin == skin;
@@ -2966,18 +2986,20 @@ impl MagpieApp {
     fn handle_app_keys(&mut self, ctx: &egui::Context) {
         // A text field holds keyboard focus: global shortcuts stay out of the way.
         let typing = ctx.egui_wants_keyboard_input();
-        let (slash, escape, ctrl_f, ctrl_j, zoomin, zoomout, zero, enter) = ctx.input(|i| {
-            (
-                i.key_pressed(egui::Key::Slash),
-                i.key_pressed(egui::Key::Escape),
-                i.key_pressed(egui::Key::F) && (i.modifiers.ctrl || i.modifiers.command),
-                i.key_pressed(egui::Key::J) && (i.modifiers.ctrl || i.modifiers.command),
-                i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals),
-                i.key_pressed(egui::Key::Minus),
-                i.key_pressed(egui::Key::Num0),
-                i.key_pressed(egui::Key::Enter),
-            )
-        });
+        let (slash, escape, ctrl_f, ctrl_j, ctrl_b, zoomin, zoomout, zero, enter) =
+            ctx.input(|i| {
+                (
+                    i.key_pressed(egui::Key::Slash),
+                    i.key_pressed(egui::Key::Escape),
+                    i.key_pressed(egui::Key::F) && (i.modifiers.ctrl || i.modifiers.command),
+                    i.key_pressed(egui::Key::J) && (i.modifiers.ctrl || i.modifiers.command),
+                    i.key_pressed(egui::Key::B) && (i.modifiers.ctrl || i.modifiers.command),
+                    i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals),
+                    i.key_pressed(egui::Key::Minus),
+                    i.key_pressed(egui::Key::Num0),
+                    i.key_pressed(egui::Key::Enter),
+                )
+            });
         let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
         if ctrl && zoomin {
             self.set_zoom(ctx, self.zoom * 1.1);
@@ -2993,6 +3015,9 @@ impl MagpieApp {
         }
         if !typing && ctrl_j {
             self.chat.open = !self.chat.open;
+        }
+        if !typing && ctrl_b {
+            self.left_open = !self.left_open;
         }
         // Enter opens the current selection on the Browse page. Text fields
         // keep Enter for themselves, guarded by `typing` above.
@@ -3070,14 +3095,56 @@ impl eframe::App for MagpieApp {
             if self.chat.open && self.chat.maximized {
                 self.show_chat(ui, content, &palette, &mut actions);
             } else {
-                let page_rect = if self.chat.open && content.width() > 700.0 {
-                    let chat_w = 360.0f32.clamp(280.0, 480.0).min(content.width() * 0.45);
-                    egui::Rect::from_min_max(
+                let mut rest = content;
+                if self.left_open && content.width() > 800.0 {
+                    let left_w = 250.0f32.clamp(200.0, 320.0).min(content.width() * 0.3);
+                    let left_rect = egui::Rect::from_min_max(
                         content.min,
-                        egui::pos2(content.right() - chat_w, content.bottom()),
+                        egui::pos2(content.left() + left_w, content.bottom()),
+                    );
+                    let sel_key = self.selection.as_ref().map(|s| s.key.as_str());
+                    let tree_out =
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(left_rect), |ui| {
+                            crate::tree::show_tree(
+                                ui,
+                                &palette,
+                                &mut self.catalog,
+                                &self.libraries,
+                                &mut self.tree_expanded,
+                                &mut self.tree_kids,
+                                &self.browse_key,
+                                sel_key,
+                            )
+                        });
+                    match tree_out.inner {
+                        crate::tree::TreeOut::None => {}
+                        crate::tree::TreeOut::Open { key, select } => {
+                            self.browse_key = key;
+                            self.browse.search = None;
+                            self.selection = Some(select);
+                            self.refresh();
+                        }
+                    }
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(content.left() + left_w + 4.0, content.top()),
+                            egui::pos2(content.left() + left_w + 4.0, content.bottom()),
+                        ],
+                        egui::Stroke::new(1.0, palette.border),
+                    );
+                    rest = egui::Rect::from_min_max(
+                        egui::pos2(content.left() + left_w + 8.0, content.top()),
+                        content.right_bottom(),
+                    );
+                }
+                let page_rect = if self.chat.open && rest.width() > 700.0 {
+                    let chat_w = 360.0f32.clamp(280.0, 480.0).min(rest.width() * 0.45);
+                    egui::Rect::from_min_max(
+                        rest.min,
+                        egui::pos2(rest.right() - chat_w, rest.bottom()),
                     )
                 } else {
-                    content
+                    rest
                 };
                 ui.scope_builder(
                     egui::UiBuilder::new().max_rect(page_rect),
@@ -3138,11 +3205,11 @@ impl eframe::App for MagpieApp {
                         }
                     },
                 );
-                if self.chat.open && !self.chat.maximized && content.width() > 700.0 {
-                    let chat_w = 360.0f32.clamp(280.0, 480.0).min(content.width() * 0.45);
+                if self.chat.open && !self.chat.maximized && rest.width() > 700.0 {
+                    let chat_w = 360.0f32.clamp(280.0, 480.0).min(rest.width() * 0.45);
                     let chat_rect = egui::Rect::from_min_max(
-                        egui::pos2(content.right() - chat_w, content.top()),
-                        egui::pos2(content.right(), content.bottom()),
+                        egui::pos2(rest.right() - chat_w, rest.top()),
+                        egui::pos2(rest.right(), rest.bottom()),
                     );
                     ui.scope_builder(egui::UiBuilder::new().max_rect(chat_rect), |ui| {
                         let palette = self.palette();

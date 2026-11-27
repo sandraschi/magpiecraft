@@ -11,6 +11,7 @@ mod library;
 mod reader;
 mod skins;
 mod theme;
+mod tree;
 
 use clap::Parser;
 use magpiecraft_core::{Catalog, Paths};
