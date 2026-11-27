@@ -37,13 +37,15 @@ No telemetry, no cloud account. This file mirrors the in-app Help Center.
 
 In this window: Libraries page (folders, volumes, Continue reading, `/`
 search), Reader (arrows, Space, H, T, R, Home, End), Organise (Review, Plans,
-Journals), Settings (libraries, reading preferences, skins, zoom, LLM
-provider and chat), Statistics (totals plus per-library items, pages, bytes).
+Journals), Settings (libraries, media drives with AI-assisted proposals, reading
+preferences, skins, zoom, LLM provider and chat, plus a separate classifier
+pair that defaults to the chat pair), Statistics (totals plus per-library items, pages, bytes).
 
 Command line (same engine, `--json` for scripts): `magpiecraft status`,
-`libraries`, `scan`, `browse`, `search`, `stats`, `review`, `plan-rename`,
+`libraries`, `propose-libraries`, `scan`, `browse`, `search`, `stats`, `review`, `plan-rename`,
 `apply-plan`, `journals`, `undo`, `duplicates`, `manifest-write`,
-`manifest-verify`, `verify-status`, `verify-run`, `backup-status`.
+`manifest-verify`, `verify-status`, `verify-run`, `backup-status`, `drives`,
+`llm` (`status`, `list`, `use [--for classify]`, `set-key`, `evict`, `test`).
 
 MCP server: `magpiecraft mcp` speaks MCP over stdio (`tools/list`, then
 `tools/call`). Portmanteau tools: `media_catalog`, `media_search`,

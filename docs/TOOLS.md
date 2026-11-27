@@ -14,6 +14,7 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `libraries` | Configured libraries with id, kind and root |
 | `library-add <name> <root> --kind <kind> [--mature] [--rtl\|--ltr]` | Add a library. The root must exist |
 | `library-remove <name> --confirm` | Drop a library's index rows. Files are never touched |
+| `propose-libraries [roots...] [--media-folder name]` | Suggest one library per level-2 drive folder (pattern pass; AI fills unknowns from Settings) |
 | `scan [library] [--full]` | Incremental scan; `--full` re-reads unchanged files |
 | `browse [key]` | No key: the libraries overview. With a key: one folder |
 | `search <words...> [--limit N] [--mode auto\|fts\|substring]` | Whole-collection search |
@@ -47,6 +48,12 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `subs-shift <path> --by <seconds> [--out file]` | Move every cue; writes a new file and never overwrites |
 | `subs-convert <path> --to srt\|vtt [--out file]` | Convert between SRT and WebVTT |
 | `subs-extract <key> --stream N --out file` | Pull an embedded subtitle track out with ffmpeg |
+| `subs-generate <key> [--model name] [--lang en] [--out file]` | Transcribe speech to an SRT sidecar with whisperx/whisper on this machine; takes minutes |
+| `drives` | Physical disks behind the libraries with health warnings |
+| `llm status` | Redacted provider config: provider, model, endpoint, key presence |
+| `llm list [--provider id]` | Live model list from the provider |
+| `llm use <provider> <model> [--for chat\|classify]` | Persist the pair; `classify` writes the classifier override (default: chat) |
+| `llm set-key <provider> --key ... [--clear]` | Store or forget one cloud key; never echoed |
 | `review [library] [--limit N]` | Items whose filename parse was uncertain, with the confidence |
 | `plan-rename [library] [--preset auto\|comics\|manga\|video] [--limit N]` | Build a rename plan. `auto` picks the preset per item kind; nothing changes on disk |
 | `plan-quarantine <key>` | Build a plan that moves one item into quarantine (never deletes) |
@@ -54,7 +61,7 @@ stdio server. Every CLI command accepts `--json` (global flag, before or after t
 | `apply <plan-id> --confirm` | Apply a plan; refused without `--confirm` |
 | `journals` | Applied plans and their outcome |
 | `undo <journal-id> --confirm` | Reverse an applied plan, including reading progress |
-| `settings` / `set-settings [--mature true] [--imgdir-min-pages N] [--skin neon-shelf] [--zoom 1.2]` | Read or change settings (`--theme dark|light` still works and maps to the default skin) |
+| `settings` / `set-settings [--mature true] [--imgdir-min-pages N] [--skin neon-shelf] [--zoom 1.2] [--drive-roots E: F:] [--media-folder name]` | Read or change settings (`--theme dark|light` still works and maps to the default skin) |
 | `bench-scan [--files N] [--dir path]` | Synthetic scan benchmark, writes only under the data home |
 | `mcp` | MCP stdio server |
 
@@ -95,7 +102,8 @@ go to stderr. Five compound tools, all read-first except the explicitly confirme
 | `library_add` | `name`, `root`, `kind`, `mature`, `rtl` | The new library |
 | `library_remove` | `name`, `confirm=true` | Rows dropped; files untouched |
 | `settings` | - | Current settings |
-| `settings_set` | `mature_visible`, `imgdir_min_pages`, `skin`, `theme`, `zoom` | Saved settings (skin wins over theme) |
+| `settings_set` | `mature_visible`, `imgdir_min_pages`, `skin`, `theme`, `zoom`, `drive_roots`, `media_folder` | Saved settings (skin wins over theme) |
+| `propose_libraries` | `roots`, `media_folder` | Proposal list plus warnings; nothing is created |
 
 ### `media_search`
 
@@ -128,6 +136,7 @@ Converting and subtitle work; everything here writes new files, never edits a so
 | `subs_shift` | `path`, `by`, `out` | Shift the cues by seconds into a new file |
 | `subs_convert` | `path`, `to`, `out` | Convert SRT to WebVTT or back into a new file |
 | `subs_extract` | `key`, `stream`, `out` | Extract an embedded subtitle track with ffmpeg |
+| `subs_generate` | `key`, `model`, `lang`, `out` | Transcribe speech to an SRT sidecar with whisperx/whisper; takes minutes |
 
 ### `media_curate`
 
@@ -172,6 +181,18 @@ Example call:
 {"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
   "name":"media_search","arguments":{"operation":"search","query":"yotsuba","limit":10}}}
 ```
+
+### `magpie_llm_*` and `magpie_skill_read`
+
+| Tool | What it does |
+|---|---|
+| `magpie_llm_status` | Redacted config: provider, model, endpoint, per-provider key presence |
+| `magpie_llm_list_models` | Live model list for one provider (`provider` optional) |
+| `magpie_llm_select` | Persist the pair; `slot: "classify"` writes the classifier override instead of the chat pair |
+| `magpie_llm_set_key` / `clear: true` | Store or forget one cloud key; the key is never echoed |
+| `magpie_llm_evict` | Evict resident Ollama models, optionally keeping one warm |
+| `magpie_llm_test` | One live completion; `ok` only on a real reply |
+| `magpie_skill_read` | Bundled skill texts (`name` optional); skills are also MCP resources under `skill://` |
 
 ## What requires confirmation
 

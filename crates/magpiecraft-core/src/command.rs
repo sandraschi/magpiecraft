@@ -30,6 +30,8 @@ pub enum Command {
     LlmSelect {
         provider: String,
         model: String,
+        /// Which slot to write: "chat" (default) or "classify".
+        slot: Option<String>,
     },
     /// Store one provider key locally. The key is never echoed back.
     LlmSetKey {
@@ -409,8 +411,10 @@ fn llm_list_models(provider: Option<&str>) -> MagpieResult<Value> {
 }
 
 /// Persist the provider and model, switching Ollama VRAM to the pick.
-/// An empty model refuses: there is no fallback model.
-fn llm_select(provider: &str, model: &str) -> MagpieResult<Value> {
+/// An empty model refuses: there is no fallback model. With slot "classify"
+/// the pair is stored as the classifier override instead of the chat pair,
+/// and no VRAM switch happens (classification warms nothing on its own).
+fn llm_select(provider: &str, model: &str, slot: Option<&str>) -> MagpieResult<Value> {
     use crate::llm::{load_config, save_config, switch_ollama_model, LlmProvider};
     let selected = LlmProvider::parse(provider)
         .ok_or_else(|| MagpieError::invalid(format!("unknown provider: {provider}")))?;
@@ -419,7 +423,20 @@ fn llm_select(provider: &str, model: &str) -> MagpieResult<Value> {
             "model is empty: discovery lists installed models",
         ));
     }
+    let classify = slot
+        .map(str::trim)
+        .is_some_and(|s| s.eq_ignore_ascii_case("classify"));
     let mut config = load_config();
+    if classify {
+        config.classify_provider = selected.id().to_string();
+        config.classify_model = model.trim().to_string();
+        save_config(&config).map_err(MagpieError::llm)?;
+        return Ok(json!({
+            "slot": "classify",
+            "provider": selected.id(),
+            "model": config.classify_model,
+        }));
+    }
     config.provider = selected.id().to_string();
     config.model = model.trim().to_string();
     save_config(&config).map_err(MagpieError::llm)?;
@@ -534,7 +551,11 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
         Command::SkillRead { name } => crate::skills::read(name.as_deref()),
         Command::LlmStatus => llm_status(),
         Command::LlmListModels { provider } => llm_list_models(provider.as_deref()),
-        Command::LlmSelect { provider, model } => llm_select(&provider, &model),
+        Command::LlmSelect {
+            provider,
+            model,
+            slot,
+        } => llm_select(&provider, &model, slot.as_deref()),
         Command::LlmSetKey {
             provider,
             api_key,
@@ -795,6 +816,7 @@ mod tests {
             Command::LlmSelect {
                 provider: "nope".to_string(),
                 model: "x".to_string(),
+                slot: None,
             },
         );
         assert_eq!(bad["ok"], json!(false));
@@ -815,9 +837,20 @@ mod tests {
             Command::LlmSelect {
                 provider: "ollama".to_string(),
                 model: "  ".to_string(),
+                slot: None,
             },
         );
         assert_eq!(empty["ok"], json!(false));
+        // Classify slot writes the override, never the chat pair.
+        let cls = dispatch(
+            &mut c,
+            Command::LlmSelect {
+                provider: "ollama".to_string(),
+                model: "  ".to_string(),
+                slot: Some("classify".to_string()),
+            },
+        );
+        assert_eq!(cls["ok"], json!(false));
     }
 
     #[test]

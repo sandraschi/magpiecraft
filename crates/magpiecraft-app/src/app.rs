@@ -110,6 +110,8 @@ enum Act {
     LlmForgetKey,
     LlmTest,
     LlmSave,
+    LlmClassifierProvider(LlmProvider),
+    LlmClassifierClear,
     ToggleChat,
     ChatSend,
     ChatClear,
@@ -122,6 +124,8 @@ enum Act {
         kind: String,
     },
     ProposeAddAll,
+    ClassifyUnknowns,
+    CancelClassify,
     PlanRename,
     ApplyPlan(String),
     UndoJournal(String),
@@ -163,6 +167,10 @@ pub struct MagpieApp {
     drive_roots_text: String,
     /// Per-row kind overrides when confirming proposals, by folder path.
     propose_kinds: std::collections::HashMap<String, String>,
+    /// AI classification run over unknown proposals.
+    classify_busy: bool,
+    classify_rx: Option<Receiver<Vec<ClassifyHit>>>,
+    classify_cancel: Option<magpiecraft_core::llm::Cancel>,
     /// Selected Help Center tab.
     help_tab: HelpTab,
     /// LLM provider state. The file is shared across craft apps; this is the
@@ -193,6 +201,14 @@ struct OrganiseView {
     plans: Vec<serde_json::Value>,
     journals: Vec<serde_json::Value>,
     message: String,
+}
+
+/// One AI-classified proposal, sent back from the worker thread.
+struct ClassifyHit {
+    path: String,
+    kind: String,
+    confidence: f32,
+    reason: String,
 }
 
 pub fn run(paths: Paths, start_key: Option<String>, start_page: &str) -> Result<(), String> {
@@ -263,6 +279,9 @@ impl MagpieApp {
             drive_propose_busy: false,
             drive_propose_rx: None,
             propose_kinds: std::collections::HashMap::new(),
+            classify_busy: false,
+            classify_rx: None,
+            classify_cancel: None,
             drive_roots_text: String::new(),
             help_tab: HelpTab::GettingStarted,
             llm: magpiecraft_core::llm::load_config(),
@@ -427,6 +446,14 @@ impl MagpieApp {
         self.persist_llm("provider switched: pick an installed model");
     }
 
+    /// A classifier override starts with an empty model: no blind defaults.
+    /// Clearing both fields returns to following the chat pair.
+    fn set_llm_classifier_provider(&mut self, provider: LlmProvider) {
+        self.llm.classify_provider = provider.id().to_string();
+        self.llm.classify_model.clear();
+        self.persist_llm("classifier override set: pick a model for it");
+    }
+
     /// Persist the pick through the bus (Ollama also switches VRAM) and
     /// re-read the shared file.
     fn use_llm_model(&mut self, model: String) {
@@ -436,6 +463,7 @@ impl MagpieApp {
             Command::LlmSelect {
                 provider: self.llm.provider.clone(),
                 model,
+                slot: None,
             },
         );
         if out.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -623,6 +651,144 @@ impl MagpieApp {
         }
     }
 
+    /// Classify the unknown proposals with the effective classifier pair on
+    /// a worker thread. Caps at 50 folders per run; results merge back into
+    /// the proposal list for user review, never auto-confirm.
+    fn start_classify(&mut self) {
+        if self.classify_busy {
+            return;
+        }
+        let Some(report) = self.drive_proposals.clone() else {
+            return;
+        };
+        let unknowns: Vec<(String, String, Vec<String>)> = report
+            .get("proposals")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| {
+                p.get("kind")
+                    .and_then(Value::as_str)
+                    .is_none_or(|k| k == "unknown" || k.trim().is_empty())
+            })
+            .take(50)
+            .filter_map(|p| {
+                let path = p.get("path")?.as_str()?.to_string();
+                if self.propose_kinds.contains_key(&path) {
+                    return None;
+                }
+                let name = p.get("name")?.as_str().unwrap_or("?").to_string();
+                let samples = p
+                    .get("samples")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect();
+                Some((path, name, samples))
+            })
+            .collect();
+        if unknowns.is_empty() {
+            self.status = "nothing unknown left to classify".to_string();
+            return;
+        }
+        let config = self.llm.clone();
+        let (tx, rx) = channel::<Vec<ClassifyHit>>();
+        self.classify_rx = Some(rx);
+        self.classify_busy = true;
+        let cancel = magpiecraft_core::llm::Cancel::new();
+        self.classify_cancel = Some(cancel.clone());
+        std::thread::Builder::new()
+            .name("magpie-classify".to_string())
+            .spawn(move || {
+                let mut hits = Vec::new();
+                for (path, name, samples) in unknowns {
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    match magpiecraft_core::llm::classify_folder_ai(
+                        &config, &name, &samples, &cancel,
+                    ) {
+                        Ok((kind, confidence, reason)) => hits.push(ClassifyHit {
+                            path,
+                            kind,
+                            confidence,
+                            reason,
+                        }),
+                        Err(e) => hits.push(ClassifyHit {
+                            path,
+                            kind: "unknown".to_string(),
+                            confidence: 0.0,
+                            reason: format!("AI failed: {e}"),
+                        }),
+                    }
+                }
+                let _ = tx.send(hits);
+            })
+            .ok();
+    }
+
+    /// Merge classifier results into the proposal list. A hit only fills an
+    /// unknown row; user overrides in propose_kinds always win.
+    fn poll_classify(&mut self, ctx: &egui::Context) {
+        let mut busy = false;
+        if let Some(rx) = &self.classify_rx {
+            match rx.try_recv() {
+                Ok(hits) => {
+                    if let Some(report) = self.drive_proposals.as_mut() {
+                        if let Some(list) =
+                            report.get_mut("proposals").and_then(Value::as_array_mut)
+                        {
+                            for item in list.iter_mut() {
+                                let Some(path) =
+                                    item.get("path").and_then(Value::as_str).map(str::to_string)
+                                else {
+                                    continue;
+                                };
+                                if self.propose_kinds.contains_key(&path) {
+                                    continue;
+                                }
+                                if let Some(hit) = hits.iter().find(|h| h.path == path) {
+                                    if let Some(obj) = item.as_object_mut() {
+                                        obj.insert(
+                                            "kind".to_string(),
+                                            Value::String(hit.kind.clone()),
+                                        );
+                                        obj.insert(
+                                            "confidence".to_string(),
+                                            Value::from(hit.confidence),
+                                        );
+                                        obj.insert(
+                                            "reason".to_string(),
+                                            Value::String(format!("AI: {}", hit.reason)),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let n = hits.len();
+                    self.status = format!("AI classified {n} folder(s); review and confirm");
+                    self.classify_busy = false;
+                    self.classify_rx = None;
+                    self.classify_cancel = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => busy = true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.status = "classification stopped unexpectedly".to_string();
+                    self.classify_busy = false;
+                    self.classify_rx = None;
+                    self.classify_cancel = None;
+                }
+            }
+        }
+        if busy {
+            ctx.request_repaint();
+        }
+    }
+
     /// Confirm one proposal as a real library (kind may be overridden in the row).
     fn confirm_proposal(&mut self, name: String, root: String, kind: String) {
         if self
@@ -773,6 +939,12 @@ impl MagpieApp {
                 Act::LlmForgetKey => self.save_llm_key(true),
                 Act::LlmTest => self.start_llm_test(),
                 Act::LlmSave => self.persist_llm("LLM settings saved"),
+                Act::LlmClassifierProvider(provider) => self.set_llm_classifier_provider(provider),
+                Act::LlmClassifierClear => {
+                    self.llm.classify_provider.clear();
+                    self.llm.classify_model.clear();
+                    self.persist_llm("Classifier follows the chat pair");
+                }
                 Act::ToggleChat => {
                     self.chat.open = !self.chat.open;
                 }
@@ -785,6 +957,12 @@ impl MagpieApp {
                 Act::ScanDrives => self.start_propose(),
                 Act::ProposeAdd { name, root, kind } => self.confirm_proposal(name, root, kind),
                 Act::ProposeAddAll => self.confirm_all_proposals(),
+                Act::ClassifyUnknowns => self.start_classify(),
+                Act::CancelClassify => {
+                    if let Some(cancel) = self.classify_cancel.take() {
+                        cancel.cancel();
+                    }
+                }
                 Act::Skin(skin) => self.set_skin(skin),
                 Act::ZoomIn => self.set_zoom(ctx, self.zoom * 1.1),
                 Act::ZoomOut => self.set_zoom(ctx, self.zoom / 1.1),
@@ -1613,6 +1791,56 @@ impl MagpieApp {
                 ui.label(egui::RichText::new(format!("discovery: {error}")).color(palette.accent));
             }
             ui.add_space(4.0);
+            ui.label(egui::RichText::new("Classification").strong());
+            ui.label(
+                egui::RichText::new(
+                    "Which pair the drive scan proposes with. Empty follows the chat pair above.",
+                )
+                .color(theme::dim_text(ui)),
+            );
+            {
+                let (eff_provider, eff_model) = self.llm.classifier();
+                let eff_text = if eff_model.trim().is_empty() {
+                    format!("{} | no model", eff_provider.id())
+                } else {
+                    format!("{} | {}", eff_provider.id(), eff_model.trim())
+                };
+                ui.horizontal(|ui| {
+                    ui.label("Effective:");
+                    ui.label(egui::RichText::new(eff_text).strong());
+                    let overriding = !self.llm.classify_provider.trim().is_empty()
+                        || !self.llm.classify_model.trim().is_empty();
+                    if overriding && ui.small_button("Follow chat").clicked() {
+                        actions.push(Act::LlmClassifierClear);
+                    }
+                });
+            }
+            ui.horizontal_wrapped(|ui| {
+                for provider in LlmProvider::ALL {
+                    let selected =
+                        LlmProvider::parse(&self.llm.classify_provider) == Some(provider);
+                    if ui
+                        .selectable_label(selected, provider.label())
+                        .on_hover_text(provider.id())
+                        .clicked()
+                    {
+                        actions.push(Act::LlmClassifierProvider(provider));
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Model");
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.llm.classify_model)
+                        .desired_width(240.0)
+                        .hint_text("empty = same as chat"),
+                );
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    self.llm.classify_model = self.llm.classify_model.trim().to_string();
+                    actions.push(Act::LlmSave);
+                }
+            });
+            ui.add_space(4.0);
             let provider = self.llm.provider_enum();
             if provider.local() {
                 ui.label(
@@ -1987,6 +2215,33 @@ impl MagpieApp {
                             actions.push(Act::ProposeAddAll);
                         }
                     });
+                    ui.horizontal(|ui| {
+                        let unknown = proposals
+                            .iter()
+                            .filter(|p| {
+                                let overridden = p
+                                    .get("path")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|path| self.propose_kinds.contains_key(path));
+                                !overridden
+                                    && p.get("kind")
+                                        .and_then(Value::as_str)
+                                        .is_none_or(|k| k == "unknown" || k.trim().is_empty())
+                            })
+                            .count();
+                        if self.classify_busy {
+                            ui.label("Classifying with the AI pair...");
+                            if ui.small_button("Cancel").clicked() {
+                                actions.push(Act::CancelClassify);
+                            }
+                        } else if unknown > 0
+                            && ui
+                                .small_button(format!("AI-classify {unknown} unknown"))
+                                .clicked()
+                        {
+                            actions.push(Act::ClassifyUnknowns);
+                        }
+                    });
                     for p in &proposals {
                         let Some(root) = p.get("path").and_then(Value::as_str) else {
                             continue;
@@ -2344,7 +2599,7 @@ impl MagpieApp {
                 "Libraries page: folders, volumes, Continue reading, search with / or the search row.",
                 "Reader: arrows, Space and Shift+Space turn pages. H half page, T two pages, R right to left, Home and End jump.",
                 "Organise: Review lists what is uncertain, Plans holds diffs to apply, Journals records what was applied.",
-                "Settings: libraries, reading preferences, skins, zoom, LLM provider and chat.",
+                "Settings: libraries, media drives with AI-assisted proposals, reading preferences, skins, zoom, LLM provider and chat (plus a separate classifier pair that defaults to chat).",
                 "Statistics: totals plus per-library items, pages and bytes.",
             ],
         );
@@ -2708,6 +2963,7 @@ impl eframe::App for MagpieApp {
         self.poll_llm(ctx);
         self.poll_drives(ctx);
         self.poll_propose(ctx);
+        self.poll_classify(ctx);
         let home = self.catalog.paths().home().to_path_buf();
         for line in self.chat.poll(ctx) {
             if self.llm.save_transcripts {
