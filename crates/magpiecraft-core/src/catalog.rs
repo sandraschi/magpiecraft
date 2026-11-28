@@ -1394,6 +1394,17 @@ impl Catalog {
         self.tools.report()
     }
 
+    /// First-run inventory: installed media apps and what MagpieCraft can
+    /// harvest from each. Read-only; absent apps are normal, not errors.
+    pub fn apps_report(&self) -> Value {
+        magpiecraft_tools::apps::apps_report()
+    }
+
+    /// Fast volume list for first-run triage. No SMART, no disk counters.
+    pub fn quick_disks(&self) -> Value {
+        magpiecraft_tools::apps::disks_report()
+    }
+
     pub fn source_registry(&self) -> Value {
         json!({
             "sources": magpiecraft_sources::SOURCES,

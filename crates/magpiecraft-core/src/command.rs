@@ -242,6 +242,10 @@ pub enum Command {
     },
     /// Physical disks the libraries sit on, with health warnings.
     DriveHealth,
+    /// First-run inventory: installed media apps and what each stash offers.
+    AppInventory,
+    /// Fast volume list for first-run triage (no SMART, no counters).
+    QuickDisks,
     /// Propose one library per level-2 folder under each drive root.
     ProposeLibraries {
         roots: Option<Vec<String>>,
@@ -310,6 +314,8 @@ impl Command {
             Command::Journals => "journals",
             Command::Undo { .. } => "undo",
             Command::DriveHealth => "drive.health",
+            Command::AppInventory => "onboard.apps",
+            Command::QuickDisks => "onboard.disks",
             Command::ProposeLibraries { .. } => "propose.libraries",
         }
     }
@@ -651,6 +657,8 @@ fn run(catalog: &mut Catalog, cmd: Command) -> MagpieResult<Value> {
         Command::Journals => catalog.journals(),
         Command::Undo { id, confirm } => catalog.undo(&id, confirm),
         Command::DriveHealth => drive_health_report(catalog),
+        Command::AppInventory => Ok(catalog.apps_report()),
+        Command::QuickDisks => Ok(catalog.quick_disks()),
         Command::ProposeLibraries {
             roots,
             media_folder,
@@ -877,6 +885,26 @@ mod tests {
             },
         );
         assert_eq!(empty["ok"], json!(false));
+    }
+
+    #[test]
+    fn onboard_inventory_lists_six_apps_and_volumes() {
+        let mut c = catalog();
+        let apps = dispatch(&mut c, Command::AppInventory);
+        assert_eq!(apps["apps"].as_array().map(|a| a.len()), Some(6));
+        assert!(apps["ready"].as_u64().is_some());
+        let ids: Vec<String> = apps["apps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|a| a.get("id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        for id in ["plex", "jellyfin", "calibre", "immich", "komga", "kavita"] {
+            assert!(ids.contains(&id.to_string()), "{ids:?}");
+        }
+        let disks = dispatch(&mut c, Command::QuickDisks);
+        assert_eq!(disks["ok"], json!(true));
+        assert!(disks["volumes"].as_array().is_some());
     }
 
     #[test]
