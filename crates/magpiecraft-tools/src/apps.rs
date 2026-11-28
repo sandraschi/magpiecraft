@@ -63,21 +63,6 @@ pub struct MediaApp {
     pub data_path: Option<String>,
 }
 
-impl MediaApp {
-    fn absent(id: &str, label: &str, needs: &str) -> Self {
-        MediaApp {
-            id: id.to_string(),
-            label: label.to_string(),
-            state: AppState::Absent,
-            version: None,
-            checks: Vec::new(),
-            usable_for: Vec::new(),
-            needs: needs.to_string(),
-            data_path: None,
-        }
-    }
-}
-
 /// Fast TCP probe. Closed ports refuse immediately; a short timeout caps
 /// filtered ones. No bytes are sent, so nothing can authenticate or break.
 pub fn tcp_open(port: u16, timeout: Duration) -> bool {
@@ -145,8 +130,7 @@ pub fn detect_plex() -> MediaApp {
     let mut checks = Vec::new();
     let mut usable = Vec::new();
     let mut version = None;
-    let mut db_parts = None;
-    let mut db_gb = None;
+    let mut db_ready = false;
     let data_ok = home.as_ref().is_some_and(|h| h.is_dir());
     checks.push(check(
         "data directory",
@@ -158,9 +142,10 @@ pub fn detect_plex() -> MediaApp {
     if let Some(h) = home.as_ref().filter(|h| h.is_dir()) {
         let db = h.join("Plug-in Support/Databases/com.plexapp.plugins.library.db");
         if db.is_file() {
-            db_parts = file_count_parts(&db);
-            db_gb = dir_size_gb(&db);
-            let detail = match (db_parts, db_gb) {
+            let parts = file_count_parts(&db);
+            let size = dir_size_gb(&db);
+            db_ready = parts.is_some();
+            let detail = match (parts, size) {
                 (Some(n), Some(g)) => format!("{n} files indexed, {g:.1} GiB database"),
                 _ => "database present".to_string(),
             };
@@ -199,7 +184,10 @@ pub fn detect_plex() -> MediaApp {
     ));
     if port_open {
         if let Ok(body) = http_get("http://127.0.0.1:32400/identity", 3) {
-            if let Some(v) = body
+            // The XML prolog carries version="1.0", so parse inside the
+            // MediaContainer tag, where version="1.43.5..." lives.
+            let tag = body.split("<MediaContainer").nth(1).unwrap_or(&body);
+            if let Some(v) = tag
                 .split("version=\"")
                 .nth(1)
                 .and_then(|s| s.split('"').next())
@@ -209,7 +197,7 @@ pub fn detect_plex() -> MediaApp {
             }
         }
     }
-    let ready = db_parts.is_some();
+    let ready = db_ready;
     let partial = !ready && (data_ok || port_open);
     let needs = if ready {
         "nothing: read-only, automatic".to_string()
@@ -430,6 +418,7 @@ pub fn detect_calibre() -> MediaApp {
 
 /// Servers identified by port plus credential-free endpoints. Komga and
 /// Kavita need a login for their APIs, so an open port alone is partial.
+#[allow(clippy::too_many_arguments)]
 fn detect_server(
     id: &str,
     label: &str,

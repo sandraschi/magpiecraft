@@ -20,6 +20,8 @@ library.
 
 - Add a folder: `media_catalog` operation `library_add` (name, root, kind,
   mature flag). List them with operation `libraries`.
+- First run: `media_onboard` operations `apps` (which media apps are installed
+  and what each stash offers) and `disks` (fast volume list).
 - Propose: `media_catalog` operation `propose_libraries` suggests one library per level-2 drive folder; confirm the unknowns.
   Unknown folders can be classified by a local model (`AI-classify unknowns` in
   Settings, or `magpie_llm_select` with `slot: "classify"` for a separate

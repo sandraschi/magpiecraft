@@ -561,8 +561,8 @@ mod tests {
         let arr = list.as_array().unwrap();
         assert_eq!(
             arr.len(),
-            13,
-            "six media_* tools plus magpie_skill_read and six magpie_llm_* tools"
+            14,
+            "seven media_* tools plus magpie_skill_read and six magpie_llm_* tools"
         );
         for t in arr {
             let name = t["name"].as_str().unwrap();

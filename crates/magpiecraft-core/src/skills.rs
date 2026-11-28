@@ -59,6 +59,7 @@ pub const KNOWN_TOOLS: &[&str] = &[
     "media_transform",
     "media_health",
     "media_curate",
+    "media_onboard",
     "magpie_skill_read",
     "magpie_llm_status",
     "magpie_llm_list_models",
