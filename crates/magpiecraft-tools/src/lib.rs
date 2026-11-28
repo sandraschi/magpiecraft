@@ -8,6 +8,8 @@
 //! Discovery order: explicit environment variable, then PATH, then the documented
 //! install location.
 
+pub mod apps;
+
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
