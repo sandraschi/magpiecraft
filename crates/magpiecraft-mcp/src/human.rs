@@ -35,6 +35,58 @@ fn list_of(value: &Value) -> Option<&Vec<Value>> {
         .or_else(|| value.as_array())
 }
 
+fn print_onboard_apps(value: &Value) {
+    let apps = value.get("apps").and_then(Value::as_array);
+    let ready = value.get("ready").and_then(Value::as_u64).unwrap_or(0);
+    let total = apps.map(|a| a.len()).unwrap_or(0);
+    println!("media apps: {ready} of {total} ready to harvest");
+    if let Some(list) = apps {
+        for app in list {
+            let state = app.get("state").and_then(Value::as_str).unwrap_or("absent");
+            println!(
+                "{:<10} {:<8} {}",
+                s(app, "label"),
+                state,
+                app.get("version").and_then(Value::as_str).unwrap_or("")
+            );
+            if let Some(uses) = app.get("usable_for").and_then(Value::as_array) {
+                for u in uses.iter().filter_map(Value::as_str) {
+                    println!("  can use: {u}");
+                }
+            }
+            let needs = s(app, "needs");
+            if !needs.is_empty() {
+                println!("  needs: {needs}");
+            }
+        }
+    }
+}
+
+fn print_onboard_disks(volumes: Option<&Value>) {
+    if let Some(list) = volumes.and_then(Value::as_array) {
+        for v in list {
+            let size = v.get("size").and_then(Value::as_u64).unwrap_or(0);
+            let free = v.get("free").and_then(Value::as_u64).unwrap_or(0);
+            let used = size.saturating_sub(free);
+            let pct = if size > 0 {
+                (used as f64 / size as f64 * 100.0).round() as u64
+            } else {
+                0
+            };
+            let flag = if pct >= 95 { " !" } else { "" };
+            println!(
+                "{}:  {}  free {} of {} ({pct}% used){flag}",
+                v.get("letter").and_then(Value::as_str).unwrap_or("?"),
+                v.get("label").and_then(Value::as_str).unwrap_or(""),
+                bytes(i64::try_from(free).unwrap_or(0)),
+                bytes(i64::try_from(size).unwrap_or(0)),
+            );
+        }
+    } else {
+        println!("no volumes found");
+    }
+}
+
 pub fn print(command: &str, value: &Value) {
     if value.get("ok").and_then(Value::as_bool) == Some(false) {
         println!("error ({}): {}", s(value, "error_type"), s(value, "error"));
@@ -365,6 +417,13 @@ pub fn print(command: &str, value: &Value) {
                     .join(", "))
                 .unwrap_or_default()
         ),
+        "onboard.apps" => print_onboard_apps(value),
+        "onboard.disks" => print_onboard_disks(value.get("volumes")),
+        "onboard" => {
+            print_onboard_apps(value);
+            println!();
+            print_onboard_disks(value.get("disks"));
+        }
         "drive.health" => {
             if let Some(drives) = value.get("drives").and_then(Value::as_array) {
                 for d in drives {

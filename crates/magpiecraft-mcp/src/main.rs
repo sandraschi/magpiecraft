@@ -282,6 +282,13 @@ enum Cmd {
     Backup,
     /// Physical disks behind the libraries, with health warnings.
     Drives,
+    /// First-run inventory: installed media apps (Plex, Jellyfin, Calibre,
+    /// Immich, Komga, Kavita) and what each stash offers. Read-only.
+    Onboard {
+        /// Only this part: apps or disks. Both when omitted.
+        #[arg(long)]
+        only: Option<String>,
+    },
     /// Build a verified backup copy plan (nothing is copied until applied).
     BackupPlan {
         /// Where the backup lives, for example E:\Media
@@ -439,6 +446,41 @@ fn main() -> std::process::ExitCode {
                 std::process::ExitCode::FAILURE
             }
         };
+    }
+
+    if let Cmd::Onboard { only } = &cli.command {
+        let mut catalog = match Catalog::open(paths) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[magpiecraft] cannot open the catalogue: {e}");
+                return std::process::ExitCode::FAILURE;
+            }
+        };
+        let want_apps = only
+            .as_deref()
+            .is_none_or(|s| s.eq_ignore_ascii_case("apps"));
+        let want_disks = only
+            .as_deref()
+            .is_none_or(|s| s.eq_ignore_ascii_case("disks"));
+        if !want_apps && !want_disks {
+            eprintln!("[magpiecraft] onboard --only takes apps or disks");
+            return std::process::ExitCode::from(2);
+        }
+        if want_apps && !want_disks {
+            let value = dispatch(&mut catalog, Command::AppInventory);
+            let code = print_value(cli.json, Command::AppInventory.id(), &value);
+            return std::process::ExitCode::from(u8::try_from(code).unwrap_or(1));
+        }
+        if want_disks && !want_apps {
+            let value = dispatch(&mut catalog, Command::QuickDisks);
+            let code = print_value(cli.json, Command::QuickDisks.id(), &value);
+            return std::process::ExitCode::from(u8::try_from(code).unwrap_or(1));
+        }
+        let apps = dispatch(&mut catalog, Command::AppInventory);
+        let disks = dispatch(&mut catalog, Command::QuickDisks);
+        let value = json!({ "ok": true, "apps": apps["apps"], "ready": apps["ready"], "disks": disks["volumes"] });
+        let code = print_value(cli.json, "onboard", &value);
+        return std::process::ExitCode::from(u8::try_from(code).unwrap_or(1));
     }
 
     if let Cmd::BenchScan { files, dir } = &cli.command {
@@ -743,6 +785,14 @@ fn build(cmd: &Cmd, json_mode: bool) -> Result<(&'static str, Command), String> 
         }
         Cmd::Backup => (Command::BackupStatus.id(), Command::BackupStatus),
         Cmd::Drives => (Command::DriveHealth.id(), Command::DriveHealth),
+        Cmd::Onboard { only }
+            if only
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case("disks")) =>
+        {
+            (Command::QuickDisks.id(), Command::QuickDisks)
+        }
+        Cmd::Onboard { .. } => (Command::AppInventory.id(), Command::AppInventory),
         Cmd::BackupPlan {
             to,
             library,

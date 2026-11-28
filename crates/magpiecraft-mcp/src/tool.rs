@@ -1,4 +1,4 @@
-//! MCP tool surface: four compound tools over the same command bus the CLI uses.
+//! MCP tool surface: five compound tools over the same command bus the CLI uses.
 //!
 //! Tool names use underscores, which some MCP hosts validate strictly. The dotted
 //! form (`media.catalog`) is accepted too, for symmetry with the command ids.
@@ -166,6 +166,17 @@ pub fn tools() -> Value {
             &["operation"]
         ),
         tool(
+            "media_onboard",
+            "First-run inventory. Operation apps: which media apps are installed (Plex, Jellyfin, Calibre, \
+              Immich, Komga, Kavita), what each stash offers MagpieCraft, and how to connect what is missing. \
+              Operation disks: fast volume list (letter, label, size, free) for triage, no SMART. \
+              Everything is read-only; an absent app is normal, not an error.",
+            json!({
+                "operation": ops(&["apps", "disks"])
+            }),
+            &["operation"]
+        ),
+        tool(
             "magpie_skill_read",
             "Read the bundled skill texts. Without name it lists the skills with their descriptions; \
              with name it returns the full SKILL.md body. Skills name only tools this server really has.",
@@ -296,6 +307,11 @@ pub fn to_command(name: &str, args: &Value) -> Result<Command, String> {
     let operation = req_str(args, "operation")?;
     let op = operation.to_ascii_lowercase();
     let cmd = match normalised.as_str() {
+        "media_onboard" => match op.as_str() {
+            "apps" => Command::AppInventory,
+            "disks" => Command::QuickDisks,
+            other => return Err(format!("unknown media_onboard operation: {other}")),
+        },
         "media_catalog" => match op.as_str() {
             "status" => Command::Status,
             "tools" => Command::Tools,
@@ -641,6 +657,11 @@ mod tests {
         .unwrap();
         assert_eq!(generate.id(), "subs.generate");
         assert!(to_command("media_transform", &json!({"operation":"subs_generate"})).is_err());
+        let onboard = to_command("media_onboard", &json!({"operation":"apps"})).unwrap();
+        assert_eq!(onboard.id(), "onboard.apps");
+        let disks = to_command("media.onboard", &json!({"operation":"disks"})).unwrap();
+        assert_eq!(disks.id(), "onboard.disks");
+        assert!(to_command("media_onboard", &json!({"operation":"nope"})).is_err());
     }
 
     #[test]
