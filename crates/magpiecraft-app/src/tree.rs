@@ -8,8 +8,25 @@
 
 use crate::library::{SelOpen, Selection};
 use egui::Ui;
-use magpiecraft_core::{Catalog, FolderView, Library};
+use magpiecraft_core::{BrowseView, Catalog, FolderView, ItemView, Library};
 use std::collections::HashMap;
+
+/// At most this many rows render under one tree node per page. An anime
+/// folder with 10,000 subfolders pages through 100 at a time instead of
+/// freezing the sidebar; the filter narrows it further.
+const TREE_PAGE_SIZE: usize = 100;
+
+/// All per-node sidebar state in one place: expansion, cached browse views,
+/// errors, page index, filter text and sort direction, keyed by node key.
+#[derive(Default)]
+pub struct TreeUi {
+    pub expanded: HashMap<String, bool>,
+    pub kids: HashMap<String, BrowseView>,
+    pub errors: HashMap<String, String>,
+    pub page: HashMap<String, usize>,
+    pub filter: HashMap<String, String>,
+    pub sort_desc: HashMap<String, bool>,
+}
 
 /// What the tree wants the app to do after a click.
 pub enum TreeOut {
@@ -18,6 +35,9 @@ pub enum TreeOut {
         key: Option<String>,
         select: Selection,
     },
+    /// Select without navigating: leaf items have no children, so the grid
+    /// stays where it is and the inspector shows the item.
+    Select(Selection),
 }
 
 fn drive_of(root: &str) -> String {
@@ -30,23 +50,29 @@ fn drive_of(root: &str) -> String {
     }
 }
 
-/// Draw the tree. Returns navigation/selection for clicks. `expanded` and
-/// `kids` persist across frames; `kids` is cleared on every refresh.
-/// `errors` holds the last browse error per node so a failed folder shows
-/// its reason instead of looking empty.
-#[allow(clippy::too_many_arguments)]
+/// Draw the tree. Returns navigation/selection for clicks. The `tree`
+/// state persists across frames; `kids`/`errors` are cleared on every
+/// refresh. Whole browse views are cached so a node shows both subfolders
+/// and leaf items (volumes are items, and a comics library is almost all
+/// volumes). Long nodes page (100 rows), filter by name and sort A-Z/Z-A.
 pub fn show_tree(
     ui: &mut Ui,
     palette: &crate::skins::SkinPalette,
     catalog: &mut Catalog,
     libraries: &[Library],
-    expanded: &mut HashMap<String, bool>,
-    kids: &mut HashMap<String, Vec<FolderView>>,
-    errors: &mut HashMap<String, String>,
+    tree: &mut TreeUi,
     browse_key: &Option<String>,
     selected_key: Option<&str>,
 ) -> TreeOut {
     let mut out = TreeOut::None;
+    let TreeUi {
+        expanded,
+        kids,
+        errors,
+        page,
+        filter,
+        sort_desc,
+    } = &mut *tree;
 
     // Group libraries under their drive letter first, so the header buttons
     // can expand or collapse every known drive and library in one click.
@@ -77,7 +103,7 @@ pub fn show_tree(
                     expanded.insert(format!("drive:{drive}"), true);
                     if let Some(libs) = groups.get(drive) {
                         for lib in libs {
-                            expanded.insert(format!("lib:{}", lib.id), true);
+                            expanded.insert(lib.key.clone(), true);
                         }
                     }
                 }
@@ -126,15 +152,14 @@ pub fn show_tree(
                 }
                 ui.indent(format!("indent-{drive}"), |ui| {
                     for lib in libs {
-                        let lkey = format!("lib:{}", lib.id);
-                        let lexpanded = *expanded.get(&lkey).unwrap_or(&false);
+                        let lexpanded = *expanded.get(&lib.key).unwrap_or(&false);
                         let is_current = browse_key.as_deref() == Some(lib.key.as_str());
                         let online = std::path::Path::new(&lib.root).is_dir();
                         ui.horizontal(|ui| {
                             let glyph = if lexpanded { "v" } else { ">" };
                             if ui.small_button(glyph).clicked() {
-                                let now = !*expanded.get(&lkey).unwrap_or(&false);
-                                expanded.insert(lkey.clone(), now);
+                                let now = !*expanded.get(&lib.key).unwrap_or(&false);
+                                expanded.insert(lib.key.clone(), now);
                             }
                             let mut label = egui::RichText::new(&lib.name);
                             if is_current {
@@ -163,12 +188,15 @@ pub fn show_tree(
                                 );
                             }
                         });
-                        if *expanded.get(&lkey).unwrap_or(&false) {
-                            if !kids.contains_key(&lkey) {
-                                load_kids(catalog, &lib.key, &lkey, kids, errors);
+                        if *expanded.get(&lib.key).unwrap_or(&false) {
+                            if !kids.contains_key(&lib.key) {
+                                load_kids(catalog, &lib.key, kids, errors);
                             }
-                            if let Some(err) = errors.get(&lkey).cloned() {
-                                ui.indent(format!("indent-{lkey}"), |ui| {
+                            // One indent per node: the error (if any) sits above
+                            // the children inside the same block, so egui never
+                            // sees two identical indent ids side by side.
+                            ui.indent(format!("indent-{}", lib.key), |ui| {
+                                if let Some(err) = errors.get(&lib.key).cloned() {
                                     ui.label(
                                         egui::RichText::new(format!(
                                             "cannot list {}: {err}",
@@ -177,17 +205,18 @@ pub fn show_tree(
                                         .size(12.0)
                                         .color(palette.accent),
                                     );
-                                });
-                            }
-                            ui.indent(format!("indent-{lkey}"), |ui| {
+                                }
                                 match show_kids(
                                     ui,
                                     palette,
                                     catalog,
                                     &lib.key,
-                                    expanded,
-                                    kids,
-                                    errors,
+                                    &mut *expanded,
+                                    &mut *kids,
+                                    &mut *errors,
+                                    &mut *page,
+                                    &mut *filter,
+                                    &mut *sort_desc,
                                     browse_key,
                                     selected_key,
                                 ) {
@@ -206,19 +235,31 @@ pub fn show_tree(
 fn load_kids(
     catalog: &mut Catalog,
     key: &str,
-    cache_key: &str,
-    kids: &mut HashMap<String, Vec<FolderView>>,
+    kids: &mut HashMap<String, BrowseView>,
     errors: &mut HashMap<String, String>,
 ) {
     match catalog.browse(Some(key)) {
         Ok(view) => {
-            errors.remove(cache_key);
-            kids.insert(cache_key.to_string(), view.folders);
+            errors.remove(key);
+            kids.insert(key.to_string(), view);
         }
         Err(e) => {
-            errors.insert(cache_key.to_string(), e.to_string());
-            kids.insert(cache_key.to_string(), Vec::new());
+            errors.insert(key.to_string(), e.to_string());
+            kids.insert(key.to_string(), empty_view());
         }
+    }
+}
+
+fn empty_view() -> BrowseView {
+    BrowseView {
+        kind: None,
+        library: None,
+        mature: false,
+        crumbs: Vec::new(),
+        folders: Vec::new(),
+        items: Vec::new(),
+        total_folders: 0,
+        total_items: 0,
     }
 }
 
@@ -229,14 +270,17 @@ fn show_kids(
     catalog: &mut Catalog,
     parent_key: &str,
     expanded: &mut HashMap<String, bool>,
-    kids: &mut HashMap<String, Vec<FolderView>>,
+    kids: &mut HashMap<String, BrowseView>,
     errors: &mut HashMap<String, String>,
+    page: &mut HashMap<String, usize>,
+    filter: &mut HashMap<String, String>,
+    sort_desc: &mut HashMap<String, bool>,
     browse_key: &Option<String>,
     selected_key: Option<&str>,
 ) -> TreeOut {
     let mut out = TreeOut::None;
     if !kids.contains_key(parent_key) {
-        load_kids(catalog, parent_key, parent_key, kids, errors);
+        load_kids(catalog, parent_key, kids, errors);
     }
     if let Some(err) = errors.get(parent_key).cloned() {
         ui.label(
@@ -245,8 +289,85 @@ fn show_kids(
                 .color(palette.accent),
         );
     }
-    let cached: Vec<FolderView> = kids.get(parent_key).cloned().unwrap_or_default();
-    for folder in &cached {
+    let view = kids.get(parent_key).cloned().unwrap_or_else(empty_view);
+    if view.folders.is_empty() && view.items.is_empty() {
+        if errors.get(parent_key).is_none() {
+            ui.label(egui::RichText::new("empty").small().color(palette.text_dim));
+        }
+        return out;
+    }
+    // Filter and sort row. One text field per node, so the widget id
+    // carries the node key; changing either resets to the first page.
+    let mut reset_page = false;
+    ui.horizontal(|ui| {
+        let field = filter.entry(parent_key.to_string()).or_default();
+        if ui
+            .add(
+                egui::TextEdit::singleline(field)
+                    .desired_width(110.0)
+                    .hint_text("filter...")
+                    .id_source(format!("tree-filter-{parent_key}")),
+            )
+            .changed()
+        {
+            reset_page = true;
+        }
+        let desc = sort_desc.entry(parent_key.to_string()).or_insert(false);
+        if ui.small_button(if *desc { "Z-A" } else { "A-Z" }).clicked() {
+            *desc = !*desc;
+            reset_page = true;
+        }
+    });
+    if reset_page {
+        page.insert(parent_key.to_string(), 0);
+    }
+    let raw = filter
+        .get(parent_key)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let needle = raw.to_lowercase();
+    let desc = *sort_desc.get(parent_key).unwrap_or(&false);
+    let mut folders: Vec<&FolderView> = view
+        .folders
+        .iter()
+        .filter(|f| needle.is_empty() || f.name.to_lowercase().contains(&needle))
+        .collect();
+    folders.sort_by_key(|a| a.name.to_lowercase());
+    let mut items: Vec<&ItemView> = view
+        .items
+        .iter()
+        .filter(|i| {
+            needle.is_empty()
+                || i.title.to_lowercase().contains(&needle)
+                || i.name.to_lowercase().contains(&needle)
+        })
+        .collect();
+    items.sort_by_key(|a| a.title.to_lowercase());
+    if desc {
+        folders.reverse();
+        items.reverse();
+    }
+    let total = folders.len() + items.len();
+    if total == 0 {
+        ui.label(
+            egui::RichText::new(format!("no match for \"{raw}\""))
+                .small()
+                .color(palette.text_dim),
+        );
+        return out;
+    }
+    let pages = total.div_ceil(TREE_PAGE_SIZE);
+    let cur = page
+        .get(parent_key)
+        .copied()
+        .unwrap_or(0)
+        .min(pages.saturating_sub(1));
+    let start = cur * TREE_PAGE_SIZE;
+    let end = (start + TREE_PAGE_SIZE).min(total);
+    let fcount = folders.len();
+    let (f_lo, f_hi) = (start.min(fcount), end.min(fcount));
+    let (i_lo, i_hi) = (start.saturating_sub(fcount), end.saturating_sub(fcount));
+    for folder in &folders[f_lo..f_hi] {
         let fkey = folder.key.clone();
         let fexpanded = *expanded.get(&fkey).unwrap_or(&false);
         let is_current = browse_key.as_deref() == Some(fkey.as_str());
@@ -269,7 +390,7 @@ fn show_kids(
                         open: SelOpen::Folder,
                         key: fkey.clone(),
                         title: folder.name.clone(),
-                        subtitle: format!("{} volumes", folder.items),
+                        subtitle: format!("{} items", folder.items),
                         library: None,
                     },
                 };
@@ -282,9 +403,12 @@ fn show_kids(
                     palette,
                     catalog,
                     &fkey,
-                    expanded,
-                    kids,
-                    errors,
+                    &mut *expanded,
+                    &mut *kids,
+                    &mut *errors,
+                    &mut *page,
+                    &mut *filter,
+                    &mut *sort_desc,
                     browse_key,
                     selected_key,
                 ) {
@@ -293,6 +417,50 @@ fn show_kids(
                 }
             });
         }
+    }
+    for item in &items[i_lo..i_hi] {
+        let open = if item.kind.is_comicish() {
+            SelOpen::Read
+        } else {
+            SelOpen::Launch
+        };
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("-").small().color(palette.text_dim));
+            if ui
+                .selectable_label(
+                    selected_key == Some(item.key.as_str()),
+                    egui::RichText::new(&item.title).small(),
+                )
+                .clicked()
+            {
+                out = TreeOut::Select(Selection {
+                    open,
+                    key: item.key.clone(),
+                    title: item.title.clone(),
+                    subtitle: item.kind.as_str().to_string(),
+                    library: None,
+                });
+            }
+        });
+    }
+    if pages > 1 {
+        let mut next = cur;
+        ui.horizontal(|ui| {
+            if ui.small_button("<").clicked() {
+                next = next.saturating_sub(1);
+            }
+            ui.label(
+                egui::RichText::new(format!("{}-{} of {total}", start + 1, end))
+                    .small()
+                    .color(palette.text_dim),
+            );
+            if ui.small_button(">").clicked() {
+                next = (next + 1).min(pages - 1);
+            }
+        });
+        page.insert(parent_key.to_string(), next);
+    } else {
+        page.insert(parent_key.to_string(), cur);
     }
     out
 }

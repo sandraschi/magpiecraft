@@ -178,11 +178,9 @@ pub struct MagpieApp {
     /// Single-click selection shown in the inspector. Never opened
     /// implicitly: only double-click, Enter or an Open button follows it.
     selection: Option<Selection>,
-    /// Hideable library tree on the left.
+    /// Hideable library tree on the left, with its filter/page/sort state.
     left_open: bool,
-    tree_expanded: std::collections::HashMap<String, bool>,
-    tree_kids: std::collections::HashMap<String, Vec<magpiecraft_core::FolderView>>,
-    tree_errors: std::collections::HashMap<String, String>,
+    tree_ui: crate::tree::TreeUi,
     /// Libraries list for the tree, refreshed with everything else.
     libraries: Vec<magpiecraft_core::Library>,
     /// Right rail visibility and tab. The rail shows chat or the inspector.
@@ -324,9 +322,7 @@ impl MagpieApp {
             browse_key: start_key.clone(),
             selection: None,
             left_open,
-            tree_expanded: std::collections::HashMap::new(),
-            tree_kids: std::collections::HashMap::new(),
-            tree_errors: std::collections::HashMap::new(),
+            tree_ui: crate::tree::TreeUi::default(),
             libraries: Vec::new(),
             right_open,
             right_tab,
@@ -436,8 +432,8 @@ impl MagpieApp {
         }
         self.stats = self.catalog.stats().ok();
         self.libraries = self.catalog.libraries().unwrap_or_default();
-        self.tree_kids.clear();
-        self.tree_errors.clear();
+        self.tree_ui.kids.clear();
+        self.tree_ui.errors.clear();
     }
 
     fn open_reader(&mut self, key: String) {
@@ -3692,9 +3688,7 @@ impl eframe::App for MagpieApp {
                                 &palette,
                                 &mut self.catalog,
                                 &self.libraries,
-                                &mut self.tree_expanded,
-                                &mut self.tree_kids,
-                                &mut self.tree_errors,
+                                &mut self.tree_ui,
                                 &self.browse_key,
                                 sel_key,
                             )
@@ -3706,6 +3700,9 @@ impl eframe::App for MagpieApp {
                             self.browse.search = None;
                             self.selection = Some(select);
                             self.refresh();
+                        }
+                        crate::tree::TreeOut::Select(select) => {
+                            self.selection = Some(select);
                         }
                     }
                     ui.painter().line_segment(
