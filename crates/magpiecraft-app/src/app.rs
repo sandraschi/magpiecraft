@@ -9,6 +9,7 @@
 use crate::chat::{ChatDock, ChatLine};
 use crate::covers::CoverCache;
 use crate::library::{self, BrowseState, Nav, Selection};
+use crate::onboard::OnboardState;
 use crate::reader::{Action, ReaderView};
 use crate::skins::{SkinId, SkinPalette};
 use crate::theme;
@@ -48,6 +49,7 @@ enum Page {
     Stats,
     Settings,
     Help,
+    Onboarding,
 }
 
 /// Right-rail tab: chat or inspector.
@@ -58,7 +60,7 @@ enum RightTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Dialog {
+pub(crate) enum Dialog {
     None,
     AddLibrary,
     About,
@@ -71,7 +73,7 @@ enum Dialog {
 /// Help Center tabs. The Help menu opens each one directly; the order matches
 /// the menu and the fleet Help content standard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HelpTab {
+pub(crate) enum HelpTab {
     GettingStarted,
     Functions,
     Usage,
@@ -109,7 +111,7 @@ impl HelpTab {
 }
 
 #[derive(Debug, Clone)]
-enum Act {
+pub(crate) enum Act {
     None,
     AddLibrary,
     ScanAll,
@@ -130,6 +132,8 @@ enum Act {
     GoStats,
     GoSettings,
     GoHelp,
+    GoOnboarding,
+    OnboardRefresh,
     GoOrganise,
     ScanLibrary(String),
     CancelScan,
@@ -246,6 +250,8 @@ pub struct MagpieApp {
     drive_report: Option<Value>,
     drive_busy: bool,
     drive_rx: Option<Receiver<Value>>,
+    /// First-run onboarding probe (disks plus media apps).
+    onboard: OnboardState,
 }
 
 /// The Organise page: what is uncertain, what is planned, what was applied.
@@ -372,6 +378,7 @@ impl MagpieApp {
             drive_report: None,
             drive_busy: false,
             drive_rx: None,
+            onboard: OnboardState::new(),
             catalog,
         };
         app.refresh();
@@ -393,7 +400,15 @@ impl MagpieApp {
             }
             "settings" => app.page = Page::Settings,
             "help" => app.page = Page::Help,
+            "onboarding" => {
+                app.page = Page::Onboarding;
+                app.onboard.start(app.catalog.paths().clone());
+            }
             _ => {}
+        }
+        if app.page == Page::Dashboard && app.libraries.is_empty() {
+            app.page = Page::Onboarding;
+            app.onboard.start(app.catalog.paths().clone());
         }
         if let Some(key) = start_key {
             if key.starts_with("lib:") {
@@ -1262,6 +1277,13 @@ impl MagpieApp {
                     self.refresh();
                 }
                 Act::GoHelp => self.page = Page::Help,
+                Act::GoOnboarding => {
+                    self.page = Page::Onboarding;
+                    self.onboard.start(self.catalog.paths().clone());
+                }
+                Act::OnboardRefresh => {
+                    self.onboard.start(self.catalog.paths().clone());
+                }
                 Act::Dialog(d) => self.dialog = d,
                 Act::Refresh => self.refresh(),
                 Act::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
@@ -1439,6 +1461,10 @@ impl MagpieApp {
                     actions.push(Act::GoOrganise);
                     ui.close();
                 }
+                if ui.button("Getting started").clicked() {
+                    actions.push(Act::GoOnboarding);
+                    ui.close();
+                }
             });
             ui.menu_button("Window", |ui| {
                 if ui.button("Dashboard").clicked() {
@@ -1584,6 +1610,7 @@ impl MagpieApp {
                 Page::Organise => "Organise".to_string(),
                 Page::Settings => "Settings".to_string(),
                 Page::Help => "Help".to_string(),
+                Page::Onboarding => "Getting started".to_string(),
             });
             ui.separator();
             ui.label(format!("zoom {:.0}%", self.zoom * 100.0));
@@ -2898,7 +2925,20 @@ impl MagpieApp {
                     ("Applied", organise.journals.as_slice()),
                 ] {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(format!("{} ({})", title, items.len())));
+                        if ui
+                            .small_button(format!("{} ({})", title, items.len()))
+                            .on_hover_text("Open in Organise")
+                            .clicked()
+                        {
+                            actions.push(Act::GoOrganise);
+                        }
+                        if items.is_empty() {
+                            ui.label(
+                                egui::RichText::new("nothing here")
+                                    .size(12.0)
+                                    .color(theme::dim_text(ui)),
+                            );
+                        }
                         for item in items.iter().take(4) {
                             ui.label(
                                 egui::RichText::new(format!("- {}", Self::card_title(item)))
@@ -3403,6 +3443,7 @@ impl MagpieApp {
                             ("Statistics", Act::GoStats),
                             ("Organise", Act::GoOrganise),
                             ("Dashboard", Act::GoDashboard),
+                            ("Getting started", Act::GoOnboarding),
                             ("Chat", Act::ToggleChat),
                             ("Inspector", Act::ToggleInspector),
                             ("Plan renames", Act::PlanRename),
@@ -3625,6 +3666,7 @@ impl eframe::App for MagpieApp {
         self.poll_drives(ctx);
         self.poll_propose(ctx);
         self.poll_classify(ctx);
+        self.onboard.poll(ctx);
         let home = self.catalog.paths().home().to_path_buf();
         for line in self.chat.poll(ctx) {
             if self.llm.save_transcripts {
@@ -3787,6 +3829,23 @@ impl eframe::App for MagpieApp {
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| self.help_page(ui));
+                        }
+                        Page::Onboarding => {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    let stats = self.stats.clone().unwrap_or_default();
+                                    let decor = self.decor();
+                                    crate::onboard::show(
+                                        ui,
+                                        &mut self.onboard,
+                                        &palette,
+                                        &decor,
+                                        &mut actions,
+                                        stats.libraries,
+                                        stats.items,
+                                    );
+                                });
                         }
                     },
                 );

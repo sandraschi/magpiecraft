@@ -8,6 +8,7 @@ mod app;
 mod chat;
 mod covers;
 mod library;
+mod onboard;
 mod reader;
 mod skins;
 mod theme;
@@ -29,7 +30,7 @@ struct Cli {
     /// Start at one library or folder key.
     #[arg(long)]
     key: Option<String>,
-    /// Start on a page: dashboard, browse, organise, stats, settings or help.
+    /// Start on a page: dashboard, browse, organise, stats, settings, help or onboarding.
     #[arg(long, default_value = "dashboard")]
     page: String,
     /// Headless check: open the catalogue, browse, read one page list, exit.
