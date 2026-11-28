@@ -194,19 +194,52 @@ fn command_for(path: &Path) -> Command {
 }
 
 fn run(path: &Path, args: &[&str]) -> ToolResult<String> {
+    run_timeout(path, args, 15)
+}
+
+/// Same as `run` with an explicit ceiling. A sick drive or a huge archive
+/// must count as skipped, never hang a whole scan.
+fn run_timeout(path: &Path, args: &[&str], secs: u64) -> ToolResult<String> {
     let label = path.display().to_string();
-    let output = command_for(path)
+    let mut child = command_for(path)
         .args(args)
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| ToolError::Failed(label.clone(), e.to_string()))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ToolError::Failed(
-            label,
-            format!("exit {:?}: {}", output.status.code(), stderr.trim()),
-        ));
+    let mut waited = 0u64;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stdout.take() {
+                    use std::io::Read as _;
+                    let _ = pipe.read_to_string(&mut stdout);
+                }
+                if let Some(mut pipe) = child.stderr.take() {
+                    use std::io::Read as _;
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                if !status.success() {
+                    return Err(ToolError::Failed(
+                        label,
+                        format!("exit {:?}: {}", status.code(), stderr.trim()),
+                    ));
+                }
+                return Ok(stdout);
+            }
+            Ok(None) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                waited += 1;
+                if waited > secs.saturating_mul(20) {
+                    let _ = child.kill();
+                    return Err(ToolError::Failed(label, format!("timed out after {secs}s")));
+                }
+            }
+            Err(e) => return Err(ToolError::Failed(label, e.to_string())),
+        }
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 // ---------------------------------------------------------------- players

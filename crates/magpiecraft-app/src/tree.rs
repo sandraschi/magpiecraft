@@ -32,6 +32,8 @@ fn drive_of(root: &str) -> String {
 
 /// Draw the tree. Returns navigation/selection for clicks. `expanded` and
 /// `kids` persist across frames; `kids` is cleared on every refresh.
+/// `errors` holds the last browse error per node so a failed folder shows
+/// its reason instead of looking empty.
 #[allow(clippy::too_many_arguments)]
 pub fn show_tree(
     ui: &mut Ui,
@@ -40,18 +42,14 @@ pub fn show_tree(
     libraries: &[Library],
     expanded: &mut HashMap<String, bool>,
     kids: &mut HashMap<String, Vec<FolderView>>,
+    errors: &mut HashMap<String, String>,
     browse_key: &Option<String>,
     selected_key: Option<&str>,
 ) -> TreeOut {
     let mut out = TreeOut::None;
 
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Library").strong());
-    });
-    ui.add_space(2.0);
-
-    // Group libraries under their drive letter, drives sorted, libraries
-    // sorted by name inside each drive.
+    // Group libraries under their drive letter first, so the header buttons
+    // can expand or collapse every known drive and library in one click.
     let mut groups: HashMap<String, Vec<&Library>> = HashMap::new();
     for lib in libraries {
         groups.entry(drive_of(&lib.root)).or_default().push(lib);
@@ -63,6 +61,41 @@ pub fn show_tree(
             libs.sort_by(|a, b| a.name.cmp(&b.name));
         }
     }
+
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Library").strong());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("Collapse all").clicked() {
+                expanded.clear();
+                for drive in &drives {
+                    expanded.insert(format!("drive:{drive}"), false);
+                }
+                kids.clear();
+            }
+            if ui.small_button("Expand all").clicked() {
+                for drive in &drives {
+                    expanded.insert(format!("drive:{drive}"), true);
+                    if let Some(libs) = groups.get(drive) {
+                        for lib in libs {
+                            expanded.insert(format!("lib:{}", lib.id), true);
+                        }
+                    }
+                }
+            }
+        });
+    });
+    ui.label(
+        egui::RichText::new(format!(
+            "{} librar{} on {} drive{}",
+            libraries.len(),
+            if libraries.len() == 1 { "y" } else { "ies" },
+            drives.len(),
+            if drives.len() == 1 { "" } else { "s" },
+        ))
+        .small()
+        .color(palette.text_dim),
+    );
+    ui.add_space(2.0);
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -96,6 +129,7 @@ pub fn show_tree(
                         let lkey = format!("lib:{}", lib.id);
                         let lexpanded = *expanded.get(&lkey).unwrap_or(&false);
                         let is_current = browse_key.as_deref() == Some(lib.key.as_str());
+                        let online = std::path::Path::new(&lib.root).is_dir();
                         ui.horizontal(|ui| {
                             let glyph = if lexpanded { "v" } else { ">" };
                             if ui.small_button(glyph).clicked() {
@@ -121,10 +155,29 @@ pub fn show_tree(
                                     },
                                 };
                             }
+                            if !online {
+                                ui.label(
+                                    egui::RichText::new("offline")
+                                        .size(11.0)
+                                        .color(palette.accent),
+                                );
+                            }
                         });
                         if *expanded.get(&lkey).unwrap_or(&false) {
                             if !kids.contains_key(&lkey) {
-                                load_kids(catalog, &lib.key, &lkey, kids);
+                                load_kids(catalog, &lib.key, &lkey, kids, errors);
+                            }
+                            if let Some(err) = errors.get(&lkey).cloned() {
+                                ui.indent(format!("indent-{lkey}"), |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "cannot list {}: {err}",
+                                            lib.root
+                                        ))
+                                        .size(12.0)
+                                        .color(palette.accent),
+                                    );
+                                });
                             }
                             ui.indent(format!("indent-{lkey}"), |ui| {
                                 match show_kids(
@@ -134,6 +187,7 @@ pub fn show_tree(
                                     &lib.key,
                                     expanded,
                                     kids,
+                                    errors,
                                     browse_key,
                                     selected_key,
                                 ) {
@@ -154,12 +208,18 @@ fn load_kids(
     key: &str,
     cache_key: &str,
     kids: &mut HashMap<String, Vec<FolderView>>,
+    errors: &mut HashMap<String, String>,
 ) {
-    let folders = catalog
-        .browse(Some(key))
-        .map(|v| v.folders)
-        .unwrap_or_default();
-    kids.insert(cache_key.to_string(), folders);
+    match catalog.browse(Some(key)) {
+        Ok(view) => {
+            errors.remove(cache_key);
+            kids.insert(cache_key.to_string(), view.folders);
+        }
+        Err(e) => {
+            errors.insert(cache_key.to_string(), e.to_string());
+            kids.insert(cache_key.to_string(), Vec::new());
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -170,12 +230,20 @@ fn show_kids(
     parent_key: &str,
     expanded: &mut HashMap<String, bool>,
     kids: &mut HashMap<String, Vec<FolderView>>,
+    errors: &mut HashMap<String, String>,
     browse_key: &Option<String>,
     selected_key: Option<&str>,
 ) -> TreeOut {
     let mut out = TreeOut::None;
     if !kids.contains_key(parent_key) {
-        load_kids(catalog, parent_key, parent_key, kids);
+        load_kids(catalog, parent_key, parent_key, kids, errors);
+    }
+    if let Some(err) = errors.get(parent_key).cloned() {
+        ui.label(
+            egui::RichText::new(format!("cannot list: {err}"))
+                .size(12.0)
+                .color(palette.accent),
+        );
     }
     let cached: Vec<FolderView> = kids.get(parent_key).cloned().unwrap_or_default();
     for folder in &cached {
@@ -216,6 +284,7 @@ fn show_kids(
                     &fkey,
                     expanded,
                     kids,
+                    errors,
                     browse_key,
                     selected_key,
                 ) {

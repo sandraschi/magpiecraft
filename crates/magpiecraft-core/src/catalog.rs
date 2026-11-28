@@ -28,6 +28,16 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// Progress of a running scan, sent to the UI about every 25 files.
+/// `done` counts classified files so far, `total` the walk size.
+#[derive(Debug, Clone)]
+pub struct ScanProgress {
+    pub library: String,
+    pub done: usize,
+    pub total: usize,
+    pub current: String,
+}
+
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
@@ -379,6 +389,18 @@ impl Catalog {
 
     // ---------------------------------------------------------------- scan
     pub fn scan(&mut self, library: Option<&str>, full: bool) -> MagpieResult<ScanReportView> {
+        self.scan_with_hook(library, full, &|_| true)
+    }
+
+    /// Scan with a progress hook. The hook gets the current library, files
+    /// done and total, and the file being probed; returning false cancels
+    /// the run with a `cancelled` error so the UI can stop a big first scan.
+    pub fn scan_with_hook(
+        &mut self,
+        library: Option<&str>,
+        full: bool,
+        hook: &dyn Fn(&ScanProgress) -> bool,
+    ) -> MagpieResult<ScanReportView> {
         let rows: Vec<LibraryRow> = match library {
             Some(key) => vec![self.library_row(key)?],
             None => self.store.libraries()?,
@@ -394,7 +416,7 @@ impl Catalog {
             ms: 0,
         };
         for row in rows {
-            let entry = self.scan_library(&row, full)?;
+            let entry = self.scan_library_with_hook(&row, full, hook)?;
             report.added += entry.added;
             report.updated += entry.updated;
             report.unchanged += entry.unchanged;
@@ -405,7 +427,15 @@ impl Catalog {
         Ok(report)
     }
 
-    fn scan_library(&mut self, lib: &LibraryRow, full: bool) -> MagpieResult<ScanItemReport> {
+    /// Progress-aware scan of one library. `hook` runs about every 25 files;
+    /// false stops the run with `cancelled` so a stuck first scan can be cut.
+    /// Writes commit every 500 files instead of every row.
+    fn scan_library_with_hook(
+        &mut self,
+        lib: &LibraryRow,
+        full: bool,
+        hook: &dyn Fn(&ScanProgress) -> bool,
+    ) -> MagpieResult<ScanItemReport> {
         let started = Instant::now();
         let root = PathBuf::from(&lib.root);
         let mut entry = ScanItemReport {
@@ -457,7 +487,25 @@ impl Catalog {
             MediaKind::Comics | MediaKind::Manga | MediaKind::Magazines
         );
 
+        let _ = self.store.begin_batch();
         for file in &walk.files {
+            let done = seen.len();
+            if done.is_multiple_of(25) {
+                let go_on = hook(&ScanProgress {
+                    library: lib.name.clone(),
+                    done,
+                    total: walk.files.len(),
+                    current: file.rel.clone(),
+                });
+                if !go_on {
+                    let _ = self.store.commit_batch();
+                    return Err(magpiecraft_scan::ScanError::Cancelled.into());
+                }
+            }
+            if done.is_multiple_of(500) && done > 0 {
+                let _ = self.store.commit_batch();
+                let _ = self.store.begin_batch();
+            }
             let (container, item_kind) = match classify_item(&file.name, library_kind) {
                 Some(pair) => pair,
                 None => continue,
@@ -496,7 +544,9 @@ impl Catalog {
                 }
                 item
             };
-            let (_, state) = self.store.upsert_item(&new_item)?;
+            let (_, state) = self.store.upsert_item(&new_item).inspect_err(|_| {
+                let _ = self.store.commit_batch();
+            })?;
             match state {
                 Upsert::Added => added += 1,
                 Upsert::Updated => updated += 1,
@@ -504,6 +554,7 @@ impl Catalog {
             }
             seen.insert(file.rel.clone());
         }
+        let _ = self.store.commit_batch();
 
         for dir in walk.dirs.iter().filter(|d| d.volume && comicish) {
             let parsed = parse_volume_name(&dir.name);

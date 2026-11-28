@@ -17,6 +17,10 @@ use std::process::Command;
 const LOCK_WAIT_MS: u64 = 180_000;
 
 fn run(exe: &Path, args: &[&str]) -> ComicResult<String> {
+    run_timeout(exe, args, 15)
+}
+
+fn run_timeout(exe: &Path, args: &[&str], secs: u64) -> ComicResult<String> {
     let mut cmd = Command::new(exe);
     cmd.args(args);
     #[cfg(windows)]
@@ -24,18 +28,50 @@ fn run(exe: &Path, args: &[&str]) -> ComicResult<String> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let output = cmd
-        .output()
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| ComicError::Archive(format!("{}: {e}", exe.display())))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ComicError::Archive(format!(
-            "7-Zip failed on {}: {}",
-            args.last().copied().unwrap_or(""),
-            stderr.trim()
-        )));
+    let mut waited = 0u64;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stdout.take() {
+                    use std::io::Read as _;
+                    let _ = pipe.read_to_string(&mut stdout);
+                }
+                if let Some(mut pipe) = child.stderr.take() {
+                    use std::io::Read as _;
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                if !status.success() {
+                    return Err(ComicError::Archive(format!(
+                        "7-Zip failed on {}: {}",
+                        args.last().copied().unwrap_or(""),
+                        stderr.trim()
+                    )));
+                }
+                return Ok(stdout);
+            }
+            Ok(None) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                waited += 1;
+                if waited > secs.saturating_mul(20) {
+                    let _ = child.kill();
+                    return Err(ComicError::Archive(format!(
+                        "7-Zip timed out after {secs}s on {}",
+                        args.last().copied().unwrap_or("")
+                    )));
+                }
+            }
+            Err(e) => {
+                return Err(ComicError::Archive(format!("{}: {e}", exe.display())));
+            }
+        }
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn require_seven_zip(helpers: &Helpers) -> ComicResult<&Path> {

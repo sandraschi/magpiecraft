@@ -52,6 +52,7 @@ pub struct BrowseState {
     pub filter: String,
     pub search: Option<SearchView>,
     pub continue_row: Vec<Value>,
+    pub load_error: Option<String>,
 }
 
 impl BrowseState {
@@ -60,7 +61,10 @@ impl BrowseState {
         let browse = match catalog.browse(key.as_deref()) {
             Ok(b) => b,
             Err(e) => {
-                error = Some(e.to_string());
+                error = Some(format!(
+                    "cannot list {}: {e}",
+                    key.as_deref().unwrap_or("libraries")
+                ));
                 catalog.browse(None).unwrap_or_else(|_| BrowseView {
                     kind: None,
                     library: None,
@@ -84,6 +88,7 @@ impl BrowseState {
                 filter: String::new(),
                 search: None,
                 continue_row,
+                load_error: error.clone(),
             },
             error,
         )
@@ -311,14 +316,31 @@ pub fn show(
 
     if state.browse.folders.is_empty() && state.browse.items.is_empty() {
         ui.add_space(16.0);
-        ui.label(egui::RichText::new("Nothing readable here.").color(palette.text_dim));
-        if state.browse.crumbs.len() <= 1 {
+        if let Some(err) = state.load_error.clone() {
+            ui.label(egui::RichText::new(err).color(palette.accent));
             ui.label(
                 egui::RichText::new(
-                    "Add a library folder in File > Add library..., then run File > Scan all libraries.",
+                    "The drive may be unplugged or the folder moved. Plug it back and run File > Scan all libraries.",
                 )
                 .color(palette.text_dim),
             );
+        } else {
+            ui.label(egui::RichText::new("Nothing readable here.").color(palette.text_dim));
+            if state.browse.crumbs.len() <= 1 {
+                ui.label(
+                    egui::RichText::new(
+                        "Add a library folder in File > Add library..., then run File > Scan all libraries.",
+                    )
+                    .color(palette.text_dim),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(
+                        "This folder holds no indexed items. If files are there, run File > Scan all libraries.",
+                    )
+                    .color(palette.text_dim),
+                );
+            }
         }
     }
     nav
@@ -568,17 +590,30 @@ fn cover(
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "no cover",
+            "cover failed",
             egui::FontId::proportional(12.0),
             palette.text_dim,
         );
         return;
     }
-    if let Ok(source) = catalog.cover_source(key) {
-        covers.request(key, source);
-    } else {
-        placeholder_paint(ui, palette, rect);
-        return;
+    match catalog.cover_source(key) {
+        Ok(source) => covers.request(key, source),
+        Err(e) => {
+            ui.painter().rect_stroke(
+                rect,
+                3.0,
+                egui::Stroke::new(1.0, palette.text_dim),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("unavailable: {e}"),
+                egui::FontId::proportional(11.0),
+                palette.text_dim,
+            );
+            return;
+        }
     }
     ui.painter().text(
         rect.center(),

@@ -207,6 +207,8 @@ impl Store {
             .map_err(StoreError::sqlite)?;
         conn.pragma_update(None, "synchronous", "NORMAL")
             .map_err(StoreError::sqlite)?;
+        conn.busy_timeout(std::time::Duration::from_secs(30))
+            .map_err(StoreError::sqlite)?;
         conn.execute_batch(schema::SCHEMA_SQL)
             .map_err(StoreError::sqlite)?;
         let store = Store { conn };
@@ -256,6 +258,21 @@ impl Store {
 
     fn tx(&mut self) -> StoreResult<Transaction<'_>> {
         self.conn.transaction().map_err(StoreError::sqlite)
+    }
+
+    /// Batch a long scan: one transaction per chunk instead of one per row.
+    /// Callers must pair every begin with a commit; an empty batch commits
+    /// to a no-op so a zero-file library cannot leave a txn open.
+    pub fn begin_batch(&mut self) -> StoreResult<()> {
+        self.conn
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(StoreError::sqlite)
+    }
+
+    pub fn commit_batch(&mut self) -> StoreResult<()> {
+        self.conn
+            .execute_batch("COMMIT")
+            .map_err(StoreError::sqlite)
     }
 
     // ---------------------------------------------------------------- meta

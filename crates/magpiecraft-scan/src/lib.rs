@@ -22,6 +22,8 @@ pub enum ScanError {
     Io(String, String),
     #[error("not a directory: {0}")]
     NotADirectory(String),
+    #[error("scan cancelled")]
+    Cancelled,
 }
 
 impl ScanError {
@@ -29,6 +31,7 @@ impl ScanError {
         match self {
             ScanError::Io(_, _) => "io",
             ScanError::NotADirectory(_) => "invalid",
+            ScanError::Cancelled => "cancelled",
         }
     }
 }

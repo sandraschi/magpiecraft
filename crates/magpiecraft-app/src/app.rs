@@ -15,7 +15,29 @@ use crate::theme;
 use magpiecraft_core::llm::{DiscoveredModel, LlmConfig, LlmProvider};
 use magpiecraft_core::{Catalog, MediaKind, Paths, Settings, StatsView};
 use serde_json::{json, Value};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc::{channel, Receiver},
+    Arc,
+};
+
+/// Messages from the scan worker: progress about every 25 files, then done.
+enum ScanMsg {
+    Progress {
+        library: String,
+        done: usize,
+        total: usize,
+        current: String,
+    },
+    Done(String),
+}
+
+struct ScanProgressState {
+    library: String,
+    done: usize,
+    total: usize,
+    current: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -110,6 +132,7 @@ enum Act {
     GoHelp,
     GoOrganise,
     ScanLibrary(String),
+    CancelScan,
     RemoveLibrary(String),
     HelpTab(HelpTab),
     LlmDiscover,
@@ -159,6 +182,7 @@ pub struct MagpieApp {
     left_open: bool,
     tree_expanded: std::collections::HashMap<String, bool>,
     tree_kids: std::collections::HashMap<String, Vec<magpiecraft_core::FolderView>>,
+    tree_errors: std::collections::HashMap<String, String>,
     /// Libraries list for the tree, refreshed with everything else.
     libraries: Vec<magpiecraft_core::Library>,
     /// Right rail visibility and tab. The rail shows chat or the inspector.
@@ -183,7 +207,9 @@ pub struct MagpieApp {
     new_kind: String,
     new_mature: bool,
     search_query: String,
-    scan_rx: Option<Receiver<String>>,
+    scan_rx: Option<Receiver<ScanMsg>>,
+    scan_cancel: Option<Arc<AtomicBool>>,
+    scan_progress: Option<ScanProgressState>,
     focus_search_next: bool,
     organise: Option<OrganiseView>,
     /// Library name armed for removal. The row shows Confirm/Keep instead of
@@ -276,6 +302,13 @@ impl MagpieApp {
         let settings = catalog.settings().clone();
         let skin = SkinId::parse(&settings.skin).unwrap_or_default();
         let zoom = settings.zoom.clamp(0.6, 2.5);
+        let left_open = settings.left_open;
+        let right_open = settings.right_open;
+        let right_tab = if settings.right_tab.trim().eq_ignore_ascii_case("inspector") {
+            RightTab::Inspector
+        } else {
+            RightTab::Chat
+        };
         cc.egui_ctx.set_visuals(theme::visuals(&skin.palette()));
         cc.egui_ctx.set_zoom_factor(zoom);
         let mut app = MagpieApp {
@@ -286,15 +319,17 @@ impl MagpieApp {
                 filter: String::new(),
                 search: None,
                 continue_row: Vec::new(),
+                load_error: None,
             },
             browse_key: start_key.clone(),
             selection: None,
-            left_open: true,
+            left_open,
             tree_expanded: std::collections::HashMap::new(),
             tree_kids: std::collections::HashMap::new(),
+            tree_errors: std::collections::HashMap::new(),
             libraries: Vec::new(),
-            right_open: false,
-            right_tab: RightTab::Chat,
+            right_open,
+            right_tab,
             inspect_key: None,
             inspect_title: String::new(),
             inspect_sub: String::new(),
@@ -314,6 +349,8 @@ impl MagpieApp {
             new_mature: false,
             search_query: String::new(),
             scan_rx: None,
+            scan_cancel: None,
+            scan_progress: None,
             focus_search_next: false,
             organise: None,
             remove_armed: None,
@@ -400,6 +437,7 @@ impl MagpieApp {
         self.stats = self.catalog.stats().ok();
         self.libraries = self.catalog.libraries().unwrap_or_default();
         self.tree_kids.clear();
+        self.tree_errors.clear();
     }
 
     fn open_reader(&mut self, key: String) {
@@ -981,29 +1019,73 @@ impl MagpieApp {
     }
 
     fn start_scan(&mut self, library: Option<String>, full: bool) {
+        if self.scan_rx.is_some() {
+            self.status = "a scan is already running".to_string();
+            return;
+        }
         let paths = self.catalog.paths().clone();
-        let (tx, rx) = channel::<String>();
+        let (tx, rx) = channel::<ScanMsg>();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.scan_cancel = Some(cancel.clone());
         let label = library
             .clone()
             .unwrap_or_else(|| "all libraries".to_string());
+        self.scan_progress = Some(ScanProgressState {
+            library: label.clone(),
+            done: 0,
+            total: 0,
+            current: String::new(),
+        });
+        let thread_label = label.clone();
         std::thread::Builder::new()
             .name("magpie-scan".to_string())
             .spawn(move || {
                 let message = match Catalog::open(paths) {
-                    Ok(mut catalog) => match catalog.scan(library.as_deref(), full) {
-                        Ok(report) => format!(
-                            "scan of {}: +{} new, {} changed, {} missing in {} ms",
-                            label, report.added, report.updated, report.missing, report.ms
-                        ),
-                        Err(e) => format!("scan failed: {e}"),
-                    },
+                    Ok(mut catalog) => {
+                        let tx_progress = tx.clone();
+                        match catalog.scan_with_hook(library.as_deref(), full, &|p| {
+                            if cancel.load(Ordering::Relaxed) {
+                                return false;
+                            }
+                            let _ = tx_progress.send(ScanMsg::Progress {
+                                library: p.library.clone(),
+                                done: p.done,
+                                total: p.total,
+                                current: p.current.clone(),
+                            });
+                            true
+                        }) {
+                            Ok(report) => format!(
+                                "scan of {}: +{} new, {} changed, {} missing in {} ms",
+                                thread_label,
+                                report.added,
+                                report.updated,
+                                report.missing,
+                                report.ms
+                            ),
+                            Err(e) => {
+                                if e.kind() == "cancelled" {
+                                    "scan cancelled, index kept as-is".to_string()
+                                } else {
+                                    format!("scan failed: {e}")
+                                }
+                            }
+                        }
+                    }
                     Err(e) => format!("scan could not open the catalogue: {e}"),
                 };
-                let _ = tx.send(message);
+                let _ = tx.send(ScanMsg::Done(message));
             })
             .ok();
         self.scan_rx = Some(rx);
-        self.status = "scanning...".to_string();
+        self.status = format!("scanning {label}...");
+    }
+
+    fn cancel_scan(&mut self) {
+        if let Some(cancel) = self.scan_cancel.as_ref() {
+            cancel.store(true, Ordering::Relaxed);
+            self.status = "cancelling scan...".to_string();
+        }
     }
 
     fn apply_actions(&mut self, actions: Vec<Act>, ctx: &egui::Context) {
@@ -1024,6 +1106,7 @@ impl MagpieApp {
                     self.remove_armed = None;
                     self.start_scan(Some(name), false);
                 }
+                Act::CancelScan => self.cancel_scan(),
                 Act::RemoveLibrary(name) => self.remove_library(name),
                 Act::HelpTab(tab) => {
                     self.page = Page::Help;
@@ -1049,6 +1132,7 @@ impl MagpieApp {
                         self.right_open = true;
                         self.right_tab = RightTab::Chat;
                     }
+                    self.persist_shell();
                 }
                 Act::ToggleInspector => {
                     if self.right_open && self.right_tab == RightTab::Inspector {
@@ -1057,9 +1141,11 @@ impl MagpieApp {
                         self.right_open = true;
                         self.right_tab = RightTab::Inspector;
                     }
+                    self.persist_shell();
                 }
                 Act::HideRail => {
                     self.right_open = false;
+                    self.persist_shell();
                 }
                 Act::OpenSelection => self.open_selected(),
                 Act::ChatSend => self.send_chat(),
@@ -1202,6 +1288,17 @@ impl MagpieApp {
         }
     }
 
+    fn persist_shell(&mut self) {
+        self.settings.left_open = self.left_open;
+        self.settings.right_open = self.right_open;
+        self.settings.right_tab = if self.right_tab == RightTab::Inspector {
+            "inspector".to_string()
+        } else {
+            "chat".to_string()
+        };
+        self.save_settings();
+    }
+
     fn run_search(&mut self) {
         let query = self.search_query.trim().to_string();
         if query.is_empty() {
@@ -1261,11 +1358,10 @@ impl MagpieApp {
                 }
             });
             ui.menu_button("View", |ui| {
-                if ui
-                    .checkbox(&mut { self.left_open }, "Sidebar (Ctrl+B)")
-                    .changed()
-                {
-                    self.left_open = !self.left_open;
+                let mut left = self.left_open;
+                if ui.checkbox(&mut left, "Sidebar (Ctrl+B)").changed() {
+                    self.left_open = left;
+                    self.persist_shell();
                     ui.close();
                 }
                 ui.separator();
@@ -1474,7 +1570,7 @@ impl MagpieApp {
         });
     }
 
-    fn status_bar(&mut self, ui: &mut egui::Ui) {
+    fn status_bar(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
         let palette = self.palette();
         ui.horizontal(|ui| {
             let items = self.stats.as_ref().map(|s| s.items).unwrap_or(0);
@@ -1501,7 +1597,33 @@ impl MagpieApp {
             }
             if self.scan_rx.is_some() {
                 ui.separator();
-                ui.label(egui::RichText::new("scanning...").color(palette.accent));
+                if let Some(progress) = self.scan_progress.as_ref() {
+                    let frac = if progress.total > 0 {
+                        (progress.done as f32 / progress.total as f32).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let mut current = progress.current.clone();
+                    if current.len() > 48 {
+                        current = format!("...{}", &current[current.len() - 45..]);
+                    }
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "scanning {} {}/{} {current}",
+                            progress.library, progress.done, progress.total
+                        ))
+                        .color(palette.accent),
+                    );
+                    ui.add(egui::ProgressBar::new(frac).desired_width(120.0));
+                    if ui.small_button("Cancel").clicked() {
+                        actions.push(Act::CancelScan);
+                    }
+                } else {
+                    ui.label(egui::RichText::new("scanning...").color(palette.accent));
+                    if ui.small_button("Cancel").clicked() {
+                        actions.push(Act::CancelScan);
+                    }
+                }
             }
             if let Some(browse) = self.browse.browse.library.clone() {
                 ui.separator();
@@ -1667,6 +1789,8 @@ impl MagpieApp {
 
     fn settings_page(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, actions: &mut Vec<Act>) {
         let palette = self.palette();
+        self.llm_card(ui, &palette, actions);
+        ui.add_space(8.0);
         theme::card(ui, &palette, Some(palette.accent), &self.decor(), |ui| {
             ui.label(egui::RichText::new("Libraries").size(19.0).strong());
             ui.label(
@@ -1844,8 +1968,6 @@ impl MagpieApp {
                 self.save_settings();
             }
         });
-        ui.add_space(8.0);
-        self.llm_card(ui, &palette, actions);
         ui.add_space(8.0);
         self.agentic_card(ui, &palette);
         ui.add_space(8.0);
@@ -3373,18 +3495,53 @@ impl MagpieApp {
         }
     }
 
-    fn poll_scan(&mut self) {
-        let message = match self.scan_rx.as_ref().map(|rx| rx.try_recv()) {
-            Some(Ok(message)) => Some(message),
-            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                Some("scan thread stopped unexpectedly".to_string())
+    fn poll_scan(&mut self, ctx: &egui::Context) {
+        let mut done: Option<String> = None;
+        let mut disconnected = false;
+        if let Some(rx) = self.scan_rx.as_ref() {
+            loop {
+                match rx.try_recv() {
+                    Ok(ScanMsg::Progress {
+                        library,
+                        done: d,
+                        total,
+                        current,
+                    }) => {
+                        self.scan_progress = Some(ScanProgressState {
+                            library: library.clone(),
+                            done: d,
+                            total,
+                            current: current.clone(),
+                        });
+                        self.status = if total > 0 {
+                            format!("scanning {library}: {d}/{total} {current}")
+                        } else {
+                            format!("scanning {library}: {current}")
+                        };
+                    }
+                    Ok(ScanMsg::Done(message)) => {
+                        done = Some(message);
+                        break;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
             }
-            _ => None,
-        };
-        if let Some(message) = message {
+        }
+        if disconnected && done.is_none() {
+            done = Some("scan thread stopped unexpectedly".to_string());
+        }
+        if let Some(message) = done {
             self.status = message;
             self.scan_rx = None;
+            self.scan_cancel = None;
+            self.scan_progress = None;
             self.refresh();
+        } else if self.scan_rx.is_some() {
+            ctx.request_repaint();
         }
     }
 
@@ -3426,6 +3583,7 @@ impl MagpieApp {
                 self.right_open = true;
                 self.right_tab = RightTab::Chat;
             }
+            self.persist_shell();
         }
         if !typing && ctrl_i {
             if self.right_open && self.right_tab == RightTab::Inspector {
@@ -3434,9 +3592,11 @@ impl MagpieApp {
                 self.right_open = true;
                 self.right_tab = RightTab::Inspector;
             }
+            self.persist_shell();
         }
         if !typing && ctrl_b {
             self.left_open = !self.left_open;
+            self.persist_shell();
         }
         // Enter opens the current selection on the Browse page. Text fields
         // keep Enter for themselves, guarded by `typing` above.
@@ -3464,7 +3624,7 @@ impl eframe::App for MagpieApp {
         if let Some(next) = theme::handle_ctrl_wheel(ctx, self.zoom) {
             self.set_zoom(ctx, next);
         }
-        self.poll_scan();
+        self.poll_scan(ctx);
         self.poll_llm(ctx);
         self.poll_drives(ctx);
         self.poll_propose(ctx);
@@ -3518,7 +3678,7 @@ impl eframe::App for MagpieApp {
                 }
             } else {
                 let mut rest = content;
-                if self.left_open && content.width() > 800.0 {
+                if self.left_open && content.width() > 620.0 {
                     let left_w = 250.0f32.clamp(200.0, 320.0).min(content.width() * 0.3);
                     let left_rect = egui::Rect::from_min_max(
                         content.min,
@@ -3534,6 +3694,7 @@ impl eframe::App for MagpieApp {
                                 &self.libraries,
                                 &mut self.tree_expanded,
                                 &mut self.tree_kids,
+                                &mut self.tree_errors,
                                 &self.browse_key,
                                 sel_key,
                             )
@@ -3559,8 +3720,8 @@ impl eframe::App for MagpieApp {
                         content.right_bottom(),
                     );
                 }
-                let page_rect = if self.right_open && rest.width() > 700.0 {
-                    let rail_w = 360.0f32.clamp(280.0, 480.0).min(rest.width() * 0.45);
+                let page_rect = if self.right_open && rest.width() > 460.0 {
+                    let rail_w = 340.0f32.clamp(260.0, 380.0).min(rest.width() * 0.85);
                     egui::Rect::from_min_max(
                         rest.min,
                         egui::pos2(rest.right() - rail_w, rest.bottom()),
@@ -3632,20 +3793,22 @@ impl eframe::App for MagpieApp {
                         }
                     },
                 );
-                if self.right_open && !self.chat.maximized && rest.width() > 700.0 {
-                    let rail_w = 360.0f32.clamp(280.0, 480.0).min(rest.width() * 0.45);
+                if self.right_open && !self.chat.maximized && rest.width() > 460.0 {
+                    let rail_w = 340.0f32.clamp(260.0, 380.0).min(rest.width() * 0.85);
                     let rail_rect = egui::Rect::from_min_max(
                         egui::pos2(rest.right() - rail_w, rest.top()),
                         egui::pos2(rest.right(), rest.bottom()),
                     );
                     ui.scope_builder(egui::UiBuilder::new().max_rect(rail_rect), |ui| {
                         let palette = self.palette();
+                        let mut tab_changed = false;
                         ui.horizontal(|ui| {
                             if ui
                                 .selectable_label(self.right_tab == RightTab::Chat, "Chat")
                                 .clicked()
                             {
                                 self.right_tab = RightTab::Chat;
+                                tab_changed = true;
                             }
                             if ui
                                 .selectable_label(
@@ -3655,6 +3818,7 @@ impl eframe::App for MagpieApp {
                                 .clicked()
                             {
                                 self.right_tab = RightTab::Inspector;
+                                tab_changed = true;
                             }
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -3672,13 +3836,16 @@ impl eframe::App for MagpieApp {
                                 self.show_inspector(ui, rail_rect, &palette, &mut actions)
                             }
                         }
+                        if tab_changed {
+                            self.persist_shell();
+                        }
                     });
                 }
             }
         });
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(status), |ui| {
-            self.status_bar(ui);
+            self.status_bar(ui, &mut actions);
         });
 
         self.apply_actions(actions, &ctx);

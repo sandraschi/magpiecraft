@@ -195,6 +195,23 @@ pub struct Settings {
     pub drive_roots: Vec<String>,
     /// Level-1 folder name on every media drive. Default: Multimedia Files.
     pub media_folder: String,
+    /// Left tree open. Persisted so Ctrl+B survives a restart.
+    #[serde(default = "default_true")]
+    pub left_open: bool,
+    /// Right rail open. Persisted so chat/inspector stay where left.
+    #[serde(default = "default_true")]
+    pub right_open: bool,
+    /// Right rail tab: "chat" or "inspector". Persisted with the rail.
+    #[serde(default = "default_right_tab")]
+    pub right_tab: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_right_tab() -> String {
+    "chat".to_string()
 }
 
 impl Default for Settings {
@@ -218,6 +235,9 @@ impl Default for Settings {
             backdrop_amount: 1.0,
             drive_roots: Vec::new(),
             media_folder: "Multimedia Files".to_string(),
+            left_open: true,
+            right_open: true,
+            right_tab: "chat".to_string(),
         }
     }
 }
@@ -247,6 +267,10 @@ impl Settings {
             self.media_folder = "Multimedia Files".to_string();
         } else {
             self.media_folder = self.media_folder.trim().to_string();
+        }
+        match self.right_tab.trim().to_ascii_lowercase().as_str() {
+            "inspector" => self.right_tab = "inspector".to_string(),
+            _ => self.right_tab = "chat".to_string(),
         }
         if SkinId::parse(&self.skin).is_none() {
             self.skin = SkinId::fallback().id().to_string();

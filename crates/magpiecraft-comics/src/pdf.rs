@@ -28,17 +28,48 @@ fn run(exe: &Path, args: &[&str]) -> ComicResult<String> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let output = cmd
-        .output()
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| ComicError::Archive(format!("{}: {e}", exe.display())))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ComicError::Archive(format!(
-            "pdfcraft-cli failed: {}",
-            stderr.trim()
-        )));
+    let mut waited = 0u64;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stdout.take() {
+                    use std::io::Read as _;
+                    let _ = pipe.read_to_string(&mut stdout);
+                }
+                if let Some(mut pipe) = child.stderr.take() {
+                    use std::io::Read as _;
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                if !status.success() {
+                    return Err(ComicError::Archive(format!(
+                        "pdfcraft-cli failed: {}",
+                        stderr.trim()
+                    )));
+                }
+                return Ok(stdout);
+            }
+            Ok(None) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                waited += 1;
+                if waited > 15 * 20 {
+                    let _ = child.kill();
+                    return Err(ComicError::Archive(
+                        "pdfcraft-cli timed out after 15s".to_string(),
+                    ));
+                }
+            }
+            Err(e) => {
+                return Err(ComicError::Archive(format!("{}: {e}", exe.display())));
+            }
+        }
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 /// Parse the JSON printed by `pdfcraft-cli info`.
